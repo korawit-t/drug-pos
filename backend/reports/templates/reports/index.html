@@ -1,0 +1,13 @@
+{% extends "reports/base.html" %}
+{% block title %}รายงาน{% endblock %}
+{% block filters %}{% endblock %}
+{% block heading %}รายงาน{% endblock %}
+{% block period %}{% endblock %}
+{% block content %}
+<ul style="line-height:2">
+  <li><a href="{% url 'report-ky9' %}">ขย.9 บัญชีการซื้อยา</a></li>
+  <li><a href="{% url 'report-ky11' %}">ขย.11 บัญชีการขายยาอันตราย (เฉพาะรายการที่ อย. ประกาศ)</a></li>
+  <li><a href="{% url 'report-expiry' %}">ยาหมดอายุและใกล้หมดอายุ</a></li>
+</ul>
+<p class="sub">ขย.10, ขย.12 และ ขย.13 ยังไม่ได้ทำในต้นแบบนี้ แต่ข้อมูลที่ต้องใช้ถูกเก็บไว้แล้วทุกบิล</p>
+{% endblock %}

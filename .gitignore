@@ -1,0 +1,16 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Shop data — never commit a real database or secret key
+backend/data/
+backend/staticfiles/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Local tooling
+.claude/launch.json
+.DS_Store

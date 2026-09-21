@@ -1,0 +1,56 @@
+{% load thai %}<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ใบเสร็จ {{ sale.number }}</title>
+<style>
+  @page { margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Leelawadee UI", "Sukhumvit Set", Thonburi, Tahoma, sans-serif; font-size: 12px; color: #000; }
+  .paper { width: 72mm; padding: 3mm 2mm; }
+  .center { text-align: center; }
+  .small { font-size: 11px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { vertical-align: top; padding: 1px 0; }
+  .num { text-align: right; white-space: nowrap; padding-left: 4px; }
+  hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
+  .total td { font-size: 15px; font-weight: bold; }
+  .void { border: 2px solid #000; text-align: center; font-weight: bold; padding: 2px; margin: 4px 0; }
+  .toolbar { padding: 8px; font-family: sans-serif; }
+  @media print { .toolbar { display: none; } }
+</style>
+</head>
+<body>
+<div class="toolbar"><button onclick="window.print()">พิมพ์</button></div>
+<div class="paper">
+  <div class="center">
+    <h1>{{ shop.name }}</h1>
+    {% if shop.address %}<div class="small">{{ shop.address|linebreaksbr }}</div>{% endif %}
+    {% if shop.phone %}<div class="small">โทร {{ shop.phone }}</div>{% endif %}
+    {% if shop.tax_id %}<div class="small">เลขประจำตัวผู้เสียภาษี {{ shop.tax_id }}</div>{% endif %}
+    <div style="margin-top:4px;font-weight:bold">ใบเสร็จรับเงิน</div>
+  </div>
+  {% if sale.status == "voided" %}<div class="void">ยกเลิกแล้ว: {{ sale.void_reason }}</div>{% endif %}
+  <table class="small">
+    <tr><td>เลขที่ {{ sale.number }}</td><td class="num">{{ sale.created_at|thaidatetime }}</td></tr>
+    <tr><td colspan="2">ผู้ขาย {{ sale.cashier.label_name }}{% if sale.buyer_display %} · ลูกค้า {{ sale.buyer_display }}{% endif %}</td></tr>
+  </table>
+  <hr>
+  <table>
+    {% for item in items %}
+    <tr><td colspan="2">{{ item.description }}</td></tr>
+    <tr><td class="small">&nbsp;&nbsp;{{ item.qty }} {{ item.unit_name }} × {{ item.unit_price|baht }}</td><td class="num">{{ item.line_total|baht }}</td></tr>
+    {% endfor %}
+  </table>
+  <hr>
+  <table>
+    <tr class="total"><td>รวม</td><td class="num">{{ sale.total|baht }}</td></tr>
+    <tr><td>{{ sale.get_payment_method_display }}</td><td class="num">{% if sale.cash_received is not None %}{{ sale.cash_received|baht }}{% endif %}</td></tr>
+    {% if sale.change is not None %}<tr><td>เงินทอน</td><td class="num">{{ sale.change|baht }}</td></tr>{% endif %}
+  </table>
+  {% if pharmacists %}<hr><div class="small">เภสัชกรผู้จ่ายยา: {{ pharmacists|join:", " }}</div>{% endif %}
+  {% if shop.receipt_footer %}<hr><div class="center small">{{ shop.receipt_footer }}</div>{% endif %}
+</div>
+</body>
+</html>

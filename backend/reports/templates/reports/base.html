@@ -1,0 +1,53 @@
+{% load thai %}<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}รายงาน{% endblock %} · {{ shop.name }}</title>
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px 24px; font-family: "Leelawadee UI", "Sukhumvit Set", Thonburi, Tahoma, sans-serif; font-size: 13px; color: #1f1f1f; }
+  a { color: #1d5fa8; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 12px; margin-bottom: 16px; background: #f4f4f1; border-radius: 8px; }
+  .toolbar form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar input, .toolbar button { font: inherit; padding: 4px 8px; }
+  h1 { font-size: 18px; margin: 0; }
+  .sub { color: #555; margin: 2px 0 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #bbb; padding: 4px 6px; vertical-align: top; text-align: left; }
+  th { background: #eee; font-weight: 600; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .empty { padding: 24px; text-align: center; color: #777; }
+  .note { margin-top: 12px; font-size: 12px; color: #666; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; }
+  .tag.expired { background: #fbe3e3; color: #8a1f1f; }
+  .tag.near { background: #fdf0d5; color: #7a4a05; }
+  @media print {
+    body { padding: 0; font-size: 11px; }
+    .toolbar, .note { display: none; }
+    th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <a href="/">← หน้าขาย</a>
+  <a href="{% url 'reports' %}">รายงานทั้งหมด</a>
+  {% block filters %}
+  <form method="get">
+    <label>ตั้งแต่ <input type="date" name="start" value="{{ start|date:'Y-m-d' }}"></label>
+    <label>ถึง <input type="date" name="end" value="{{ end|date:'Y-m-d' }}"></label>
+    <button type="submit">แสดง</button>
+  </form>
+  {% endblock %}
+  <button onclick="window.print()">พิมพ์</button>
+</div>
+<h1>{% block heading %}{% endblock %}</h1>
+<div class="sub">
+  {{ shop.name }}{% if shop.license_no %} · ใบอนุญาต {{ shop.license_no }}{% endif %}
+  {% block period %} · ระหว่างวันที่ {{ start|thaidate:"long" }} ถึง {{ end|thaidate:"long" }}{% endblock %}
+</div>
+{% block content %}{% endblock %}
+<p class="note">รูปแบบคอลัมน์ในต้นแบบนี้ยังต้องเทียบกับแบบฟอร์มทางการของ อย. ก่อนใช้งานจริง</p>
+</body>
+</html>

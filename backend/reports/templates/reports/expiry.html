@@ -1,0 +1,39 @@
+{% extends "reports/base.html" %}
+{% load thai %}
+{% block title %}ยาใกล้หมดอายุ{% endblock %}
+{% block filters %}
+<form method="get">
+  <label>หมดอายุภายใน <input type="number" name="days" value="{{ days }}" min="0" style="width:80px"> วัน</label>
+  <button type="submit">แสดง</button>
+</form>
+{% endblock %}
+{% block heading %}ยาหมดอายุและใกล้หมดอายุ{% endblock %}
+{% block period %} · ณ วันที่ {{ today|thaidate:"long" }} · หมดอายุภายใน {{ days }} วัน{% endblock %}
+{% block content %}
+<table>
+  <thead>
+    <tr>
+      <th>ชื่อยา</th>
+      <th>เลขที่ lot</th>
+      <th>วันหมดอายุ</th>
+      <th>สถานะ</th>
+      <th class="num">คงเหลือ</th>
+      <th>ที่เก็บ</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for lot in lots %}
+    <tr>
+      <td>{{ lot.product.display_name }}</td>
+      <td>{{ lot.lot_no }}</td>
+      <td>{{ lot.expiry_date|thaidate }}</td>
+      <td>{% if lot.expiry_date < today %}<span class="tag expired">หมดอายุแล้ว</span>{% else %}<span class="tag near">ใกล้หมดอายุ</span>{% endif %}</td>
+      <td class="num">{{ lot.qty_on_hand }} {{ lot.product.base_unit }}</td>
+      <td>{{ lot.product.storage_location|default:"-" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" class="empty">ไม่มียาหมดอายุหรือใกล้หมดอายุ</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

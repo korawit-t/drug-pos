@@ -1,0 +1,44 @@
+{% load thai %}<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ฉลากยา {{ sale.number }}</title>
+<style>
+  @page { size: 80mm 50mm; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Leelawadee UI", "Sukhumvit Set", Thonburi, Tahoma, sans-serif; color: #000; }
+  .label { width: 80mm; height: 50mm; padding: 2.5mm 3mm; overflow: hidden; display: flex; flex-direction: column; break-after: page; }
+  .label:last-of-type { break-after: auto; }
+  .head { display: flex; justify-content: space-between; font-size: 9px; border-bottom: 1px solid #000; padding-bottom: 0.8mm; }
+  .patient { display: flex; justify-content: space-between; font-size: 11px; margin-top: 1mm; }
+  .drug { font-size: 13px; font-weight: bold; margin-top: 1mm; line-height: 1.25; }
+  .drug span { font-weight: normal; }
+  .generic { font-size: 9.5px; }
+  .dosage { font-size: 13px; margin-top: 1.2mm; line-height: 1.3; flex: 1; }
+  .warn { font-size: 9.5px; font-weight: bold; }
+  .foot { display: flex; justify-content: space-between; font-size: 9px; border-top: 1px solid #000; padding-top: 0.6mm; }
+  .toolbar { padding: 8px; font-family: sans-serif; }
+  @media screen { .label { border: 1px dashed #999; margin: 8px; } }
+  @media print { .toolbar { display: none; } }
+</style>
+</head>
+<body>
+<div class="toolbar"><button onclick="window.print()">พิมพ์</button></div>
+{% for item in items %}
+<div class="label">
+  <div class="head"><b>{{ shop.name }}</b><span>{% if shop.phone %}โทร {{ shop.phone }}{% endif %}</span></div>
+  <div class="patient"><span>ชื่อ {{ buyer|default:"................................................" }}</span><span>{{ sale.created_at|thaidate }}</span></div>
+  <div class="drug">{{ item.description }} <span>· {{ item.qty }} {{ item.unit_name }}</span></div>
+  {% if item.product.generic_name %}<div class="generic">({{ item.product.generic_name }})</div>{% endif %}
+  <div class="dosage">{{ item.dosage_text|default:"วิธีใช้ ........................................................................................................" }}</div>
+  {% if item.product.label_warning %}<div class="warn">คำเตือน: {{ item.product.label_warning }}</div>{% endif %}
+  <div class="foot">
+    <span>{% if item.first_lot %}Lot {{ item.first_lot.lot_no }} · EXP {{ item.first_lot.expiry_date|thaidate:"month" }}{% endif %}</span>
+    <span>{% if item.confirmed_by %}{{ item.confirmed_by.label_name }}{% endif %}</span>
+  </div>
+</div>
+{% empty %}
+<p style="font-family:sans-serif;padding:8px">บิลนี้ไม่มีรายการยา</p>
+{% endfor %}
+</body>
+</html>

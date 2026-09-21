@@ -1,0 +1,38 @@
+{% extends "reports/base.html" %}
+{% load thai %}
+{% block title %}ขย.9{% endblock %}
+{% block heading %}บัญชีการซื้อยา (ขย.9){% endblock %}
+{% block content %}
+<table>
+  <thead>
+    <tr>
+      <th>ลำดับ</th>
+      <th>วันที่ซื้อ</th>
+      <th>ชื่อยา</th>
+      <th>เลขทะเบียนตำรับยา</th>
+      <th>เลขที่ lot</th>
+      <th>วันหมดอายุ</th>
+      <th class="num">จำนวน</th>
+      <th>ผู้ขาย</th>
+      <th>เลขที่ใบกำกับ</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ item.purchase.received_date|thaidate }}</td>
+      <td>{{ item.unit.product.display_name }}{% if item.unit.product.generic_name %}<br><small>{{ item.unit.product.generic_name }}</small>{% endif %}</td>
+      <td>{{ item.unit.product.registration_no|default:"-" }}</td>
+      <td>{{ item.lot_no }}</td>
+      <td>{{ item.expiry_date|thaidate }}</td>
+      <td class="num">{{ item.qty }} {{ item.unit.name }}</td>
+      <td>{{ item.purchase.supplier.name }}{% if item.purchase.supplier.address %}<br><small>{{ item.purchase.supplier.address }}</small>{% endif %}</td>
+      <td>{{ item.purchase.invoice_no|default:"-" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="9" class="empty">ไม่มีการรับยาในช่วงนี้</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "reports/base.html" %}
+{% load thai %}
+{% block title %}ขย.11{% endblock %}
+{% block heading %}บัญชีการขายยาอันตราย (ขย.11){% endblock %}
+{% block content %}
+<table>
+  <thead>
+    <tr>
+      <th>ลำดับ</th>
+      <th>วันที่ขาย</th>
+      <th>เลขที่บิล</th>
+      <th>ชื่อยา</th>
+      <th>เลขที่ lot</th>
+      <th class="num">จำนวน</th>
+      <th>ชื่อผู้ซื้อ</th>
+      <th>เภสัชกรผู้จ่าย</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ item.sale.created_at|thaidatetime }}</td>
+      <td>{{ item.sale.number }}</td>
+      <td>{{ item.description }}{% if item.product.generic_name %}<br><small>{{ item.product.generic_name }}</small>{% endif %}</td>
+      <td>{% for a in item.allocations.all %}{{ a.lot.lot_no }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+      <td class="num">{{ item.qty }} {{ item.unit_name }}</td>
+      <td>{{ item.sale.buyer_display }}</td>
+      <td>{{ item.confirmed_by.label_name|default:"-" }}{% if item.confirmed_by.license_no %}<br><small>{{ item.confirmed_by.license_no }}</small>{% endif %}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="8" class="empty">ไม่มีการขายยาที่ต้องลง ขย.11 ในช่วงนี้</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
