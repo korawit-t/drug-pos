@@ -32,6 +32,11 @@ body {
   background: var(--bg);
 }
 
+/* Screens stay mounted while hidden; this beats their own display rules. */
+[hidden] {
+  display: none !important;
+}
+
 button,
 input,
 select,
@@ -60,6 +65,15 @@ textarea:focus {
 
 textarea {
   resize: vertical;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+  opacity: 1;
 }
 
 a {
@@ -112,6 +126,8 @@ kbd {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -324,6 +340,36 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  flex: none;
+}
+
+.view-tabs a {
+  padding: 6px 12px;
+  border-radius: 7px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.view-tabs a:hover {
+  color: var(--text);
+}
+
+.view-tabs a.active {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--border);
 }
 
 .top-links {
@@ -945,4 +991,114 @@ kbd {
   .col-status {
     width: 150px;
   }
+}
+
+/* Receiving -------------------------------------------------------------- */
+
+.receive-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.receive-main .cart-area {
+  flex: 1;
+}
+
+.receipt-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.receipt-title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.head-grid {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 14px;
+}
+
+.span-all {
+  grid-column: 1 / -1;
+}
+
+.receive-search {
+  display: grid;
+  gap: 6px;
+}
+
+.receive-search .search {
+  max-width: none;
+}
+
+.receive-search p {
+  margin: 0;
+}
+
+.receive-table input,
+.receive-table select {
+  width: 100%;
+}
+
+.receive-table .col-qty {
+  width: 80px;
+}
+
+.receive-table .col-unit {
+  width: 140px;
+}
+
+.col-lot {
+  width: 130px;
+}
+
+.col-exp {
+  width: 150px;
+}
+
+.col-cost {
+  width: 100px;
+}
+
+.col-cost input {
+  text-align: right;
+}
+
+.line-warning {
+  font-size: 13px;
+  color: var(--amber-text);
+  margin-top: 2px;
+}
+
+.line-error {
+  font-size: 13px;
+  color: var(--red);
+  margin-top: 2px;
+}
+
+.receive-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.receive-foot .total {
+  font-size: 24px;
+}
+
+.recent .pick-list li {
+  align-items: flex-start;
 }

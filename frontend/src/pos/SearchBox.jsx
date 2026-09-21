@@ -7,7 +7,15 @@ function defaultUnit(product) {
   return product.units.find((u) => u.id === product.matched_unit_id) || product.units.find((u) => u.is_default) || product.units[0];
 }
 
-export default function SearchBox({ inputRef, priceLevel, onPick, onEmptyKey, onNotFound }) {
+export default function SearchBox({
+  inputRef,
+  priceLevel = 1,
+  showPrice = true,
+  placeholder = 'สแกนบาร์โค้ด หรือพิมพ์ชื่อยา / ชื่อสามัญ',
+  onPick,
+  onEmptyKey,
+  onNotFound,
+}) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState({ query: '', items: [] });
   const [active, setActive] = useState(0);
@@ -94,7 +102,7 @@ export default function SearchBox({ inputRef, priceLevel, onPick, onEmptyKey, on
         value={query}
         onChange={onChange}
         onKeyDown={onKeyDown}
-        placeholder="สแกนบาร์โค้ด หรือพิมพ์ชื่อยา / ชื่อสามัญ"
+        placeholder={placeholder}
         aria-label="ค้นหาสินค้า"
         autoComplete="off"
         spellCheck="false"
@@ -127,10 +135,12 @@ export default function SearchBox({ inputRef, priceLevel, onPick, onEmptyKey, on
                     {p.storage_location && <span className="muted">{p.storage_location}</span>}
                   </div>
                 </div>
-                <div className="result-price">
-                  {bahtOf(unit.prices[priceLevel - 1])}
-                  <span className="muted"> / {unit.name}</span>
-                </div>
+                {showPrice && (
+                  <div className="result-price">
+                    {bahtOf(unit.prices[priceLevel - 1])}
+                    <span className="muted"> / {unit.name}</span>
+                  </div>
+                )}
               </li>
             );
           })}

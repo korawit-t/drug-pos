@@ -1,4 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+export function useToast() {
+  const [toast, setToast] = useState(null);
+  const timer = useRef(null);
+  const notify = useCallback((message, kind = 'info') => {
+    clearTimeout(timer.current);
+    setToast({ message, kind });
+    timer.current = setTimeout(() => setToast(null), kind === 'error' ? 6000 : 3500);
+  }, []);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return [toast, notify];
+}
+
+export function Toast({ toast }) {
+  if (!toast) return null;
+  return (
+    <div className={`toast ${toast.kind}`} role="status">
+      {toast.message}
+    </div>
+  );
+}
 
 export function Modal({ title, onClose, children, footer, width = 560 }) {
   useEffect(() => {

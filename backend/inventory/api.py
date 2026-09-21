@@ -1,11 +1,13 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from django.db.models import Prefetch, Q
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Prefetch, Q, Sum
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from ninja import Router, Schema
+from ninja import Field, Router, Schema
 
-from .models import Lot, Product, ProductUnit
+from .models import Lot, Product, ProductUnit, Purchase, Supplier
+from .services import PurchaseData, PurchaseLine, delete_draft, last_costs, save_purchase
 
 router = Router(tags=["products"])
 
@@ -117,3 +119,185 @@ def products_by_id(request, ids: str):
     id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
     today = timezone.localdate()
     return [product_payload(p, today) for p in _products().filter(pk__in=id_list)]
+
+
+# --- Receiving (รับยาเข้า) ---------------------------------------------------
+
+
+class SupplierOut(Schema):
+    id: int
+    name: str
+
+
+@router.get("/suppliers", response=list[SupplierOut])
+def list_suppliers(request):
+    return [{"id": s.pk, "name": s.name} for s in Supplier.objects.all()]
+
+
+class PurchaseLineIn(Schema):
+    unit_id: int
+    qty: int = Field(gt=0)
+    lot_no: str = ""
+    expiry_date: date | None = None
+    unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+
+
+class PurchaseIn(Schema):
+    received_date: date
+    is_opening_balance: bool = False
+    supplier_id: int | None = None
+    invoice_no: str = ""
+    invoice_date: date | None = None
+    note: str = ""
+    lines: list[PurchaseLineIn] = []
+    post: bool = False  # true: also post to stock (all or nothing)
+
+
+class PurchaseItemOut(Schema):
+    id: int
+    unit_id: int
+    product: ProductOut
+    qty: int
+    lot_no: str
+    expiry_date: date | None
+    unit_cost: Decimal | None
+    line_total: Decimal
+
+
+class PurchaseOut(Schema):
+    id: int
+    status: str
+    is_opening_balance: bool
+    supplier_id: int | None
+    supplier_name: str
+    invoice_no: str
+    invoice_date: date | None
+    received_date: date
+    note: str
+    created_by: str
+    posted_by: str
+    posted_at: datetime | None
+    total_cost: Decimal
+    items: list[PurchaseItemOut]
+
+
+class PurchaseRowOut(Schema):
+    id: int
+    status: str
+    is_opening_balance: bool
+    supplier_name: str
+    invoice_no: str
+    received_date: date
+    item_count: int
+    total_cost: Decimal
+    created_by: str
+
+
+def _name(user) -> str:
+    return user.label_name if user else ""
+
+
+def purchase_payload(purchase: Purchase) -> dict:
+    today = timezone.localdate()
+    items = list(purchase.items.select_related("unit").order_by("id"))
+    products = {p.pk: p for p in _products_any().filter(pk__in={item.unit.product_id for item in items})}
+    lines = [
+        {
+            "id": item.pk,
+            "unit_id": item.unit_id,
+            "product": product_payload(products[item.unit.product_id], today),
+            "qty": item.qty,
+            "lot_no": item.lot_no,
+            "expiry_date": item.expiry_date,
+            "unit_cost": item.unit_cost,
+            "line_total": (item.unit_cost or Decimal("0")) * item.qty,
+        }
+        for item in items
+    ]
+    return {
+        "id": purchase.pk,
+        "status": purchase.status,
+        "is_opening_balance": purchase.is_opening_balance,
+        "supplier_id": purchase.supplier_id,
+        "supplier_name": purchase.supplier.name if purchase.supplier else "",
+        "invoice_no": purchase.invoice_no,
+        "invoice_date": purchase.invoice_date,
+        "received_date": purchase.received_date,
+        "note": purchase.note,
+        "created_by": _name(purchase.created_by),
+        "posted_by": _name(purchase.posted_by),
+        "posted_at": purchase.posted_at,
+        "total_cost": sum((line["line_total"] for line in lines), Decimal("0")),
+        "items": lines,
+    }
+
+
+def _products_any():
+    """Like _products() but keeps inactive products, so old receipts still open."""
+    return Product.objects.prefetch_related(
+        "units", Prefetch("lots", queryset=Lot.objects.filter(qty_on_hand__gt=0).order_by("expiry_date", "id"))
+    )
+
+
+def _purchase_data(data: PurchaseIn) -> PurchaseData:
+    return PurchaseData(
+        received_date=data.received_date,
+        is_opening_balance=data.is_opening_balance,
+        supplier_id=data.supplier_id,
+        invoice_no=data.invoice_no,
+        invoice_date=data.invoice_date,
+        note=data.note,
+        lines=[PurchaseLine(l.unit_id, l.qty, l.lot_no, l.expiry_date, l.unit_cost) for l in data.lines],
+    )
+
+
+@router.get("/purchases", response=list[PurchaseRowOut])
+def list_purchases(request, limit: int = 30):
+    line_total = ExpressionWrapper(F("items__qty") * F("items__unit_cost"), output_field=DecimalField())
+    purchases = (
+        Purchase.objects.select_related("supplier", "created_by")
+        .annotate(item_count=Count("items"), total_cost=Sum(line_total))
+        .order_by("status", "-received_date", "-id")[: min(limit, 100)]
+    )
+    return [
+        {
+            "id": p.pk,
+            "status": p.status,
+            "is_opening_balance": p.is_opening_balance,
+            "supplier_name": p.supplier.name if p.supplier else "",
+            "invoice_no": p.invoice_no,
+            "received_date": p.received_date,
+            "item_count": p.item_count,
+            "total_cost": p.total_cost or Decimal("0"),
+            "created_by": _name(p.created_by),
+        }
+        for p in purchases
+    ]
+
+
+@router.get("/purchases/last-costs")
+def purchase_last_costs(request, unit_ids: str):
+    ids = [int(x) for x in unit_ids.split(",") if x.strip().isdigit()]
+    return {str(unit_id): cost for unit_id, cost in last_costs(ids).items()}
+
+
+@router.get("/purchases/{purchase_id}", response=PurchaseOut)
+def get_purchase(request, purchase_id: int):
+    return purchase_payload(get_object_or_404(Purchase, pk=purchase_id))
+
+
+@router.post("/purchases", response=PurchaseOut)
+def create_purchase(request, data: PurchaseIn):
+    return purchase_payload(save_purchase(_purchase_data(data), request.user, post=data.post))
+
+
+@router.put("/purchases/{purchase_id}", response=PurchaseOut)
+def update_purchase(request, purchase_id: int, data: PurchaseIn):
+    purchase = get_object_or_404(Purchase, pk=purchase_id)
+    return purchase_payload(save_purchase(_purchase_data(data), request.user, purchase=purchase, post=data.post))
+
+
+@router.delete("/purchases/{purchase_id}")
+def remove_draft(request, purchase_id: int):
+    delete_draft(get_object_or_404(Purchase, pk=purchase_id))
+    return {"ok": True}

@@ -133,6 +133,11 @@ class PurchaseAdmin(admin.ModelAdmin):
     def item_count(self, obj):
         return obj.items.count()
 
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
     def has_change_permission(self, request, obj=None):
         # A posted receipt is part of the stock ledger — view only.
         if obj is not None and obj.status == Purchase.Status.POSTED:

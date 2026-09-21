@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 
 class PriceLevel(models.Model):
@@ -196,6 +197,11 @@ class Purchase(models.Model):
     received_date = models.DateField("วันที่รับยา")
     note = models.CharField("หมายเหตุ", max_length=200, blank=True)
     status = models.CharField("สถานะ", max_length=10, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField("สร้างเมื่อ", default=timezone.now, editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="ผู้สร้าง", null=True, blank=True, editable=False,
+        on_delete=models.PROTECT, related_name="+",
+    )
     posted_at = models.DateTimeField("บันทึกเข้าสต็อกเมื่อ", null=True, blank=True)
     posted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, verbose_name="ผู้บันทึก", null=True, blank=True,
@@ -221,9 +227,13 @@ class PurchaseItem(models.Model):
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name="items")
     unit = models.ForeignKey(ProductUnit, verbose_name="สินค้า / หน่วย", on_delete=models.PROTECT, related_name="+")
     qty = models.PositiveIntegerField("จำนวน")
-    lot_no = models.CharField("เลขที่ lot", max_length=50)
-    expiry_date = models.DateField("วันหมดอายุ")
-    unit_cost = models.DecimalField("ราคาทุนต่อหน่วย", max_digits=10, decimal_places=2, default=0)
+    # A draft may be saved half-filled; lot, expiry and cost are required when it's
+    # posted to stock. An empty cost ("not entered yet") is different from 0 (free goods).
+    lot_no = models.CharField("เลขที่ lot", max_length=50, blank=True)
+    expiry_date = models.DateField("วันหมดอายุ", null=True, blank=True)
+    unit_cost = models.DecimalField(
+        "ราคาทุนต่อหน่วย", max_digits=10, decimal_places=2, null=True, blank=True, help_text="ของแถมใส่ 0"
+    )
     lot = models.ForeignKey(Lot, null=True, blank=True, editable=False, on_delete=models.PROTECT, related_name="+")
 
     class Meta:

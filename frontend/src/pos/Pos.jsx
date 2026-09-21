@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { bahtOf } from '../format.js';
+import { Brand, TopLinks, ViewTabs } from '../nav.jsx';
 import { labelsUrl, printPage, receiptUrl } from '../print.js';
 import { billFromHeld, billNeeds, billReducer, billTotalSatang, heldPayload, newBill, planStock } from './bill.js';
 import CartTable from './CartTable.jsx';
@@ -11,7 +12,7 @@ import PharmacistModal from './PharmacistModal.jsx';
 import SalesTodayModal from './SalesTodayModal.jsx';
 import SearchBox from './SearchBox.jsx';
 import SidePanel from './SidePanel.jsx';
-import { usePersistentState } from './ui.jsx';
+import { Toast, usePersistentState, useToast } from './ui.jsx';
 
 const FKEYS = [
   ['F2', 'ลูกค้า'],
@@ -24,40 +25,31 @@ const FKEYS = [
   ['F12', 'ชำระเงิน'],
 ];
 
-export default function Pos({ me, onLogout }) {
-  const [meta, setMeta] = useState(null);
+export default function Pos({ meta, nav, active }) {
   const [bill, dispatch] = useReducer(billReducer, undefined, newBill);
   const [modal, setModal] = useState(null);
   const [summary, setSummary] = useState(null);
   const [lastSale, setLastSale] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [toast, notify] = useToast();
   const [printPrefs, setPrintPrefs] = usePersistentState('drugpos.print', { receipt: false, labels: false });
   const searchRef = useRef(null);
-  const toastTimer = useRef(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   const plan = useMemo(() => planStock(bill.lines), [bill.lines]);
   const totalSatang = billTotalSatang(bill);
-
-  const notify = useCallback((message, kind = 'info') => {
-    clearTimeout(toastTimer.current);
-    setToast({ message, kind });
-    toastTimer.current = setTimeout(() => setToast(null), kind === 'error' ? 6000 : 3500);
-  }, []);
 
   const refreshSummary = useCallback(() => {
     api('/sales/summary').then(setSummary).catch(() => {});
   }, []);
 
   useEffect(() => {
-    api('/meta')
-      .then(setMeta)
-      .catch((err) => notify(err.message, 'error'));
-    refreshSummary();
-  }, [notify, refreshSummary]);
+    if (active) refreshSummary();
+  }, [active, refreshSummary]);
 
   useEffect(() => {
-    if (!modal) searchRef.current?.focus();
-  }, [modal, meta]);
+    if (active && !modal) searchRef.current?.focus();
+  }, [active, modal]);
 
   function addProduct(product, unitId) {
     if (product.available <= 0) {
@@ -182,6 +174,7 @@ export default function Pos({ me, onLogout }) {
   };
   useEffect(() => {
     const onKey = (e) => {
+      if (!activeRef.current) return;
       const modalOpen = document.querySelector('.modal-backdrop');
       const handler = keyHandlers.current[e.key];
       if (!handler) {
@@ -199,15 +192,11 @@ export default function Pos({ me, onLogout }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  if (!meta) return <div className="boot">กำลังโหลดข้อมูลร้าน…</div>;
-
   return (
-    <div className="pos">
+    <div className="pos" hidden={!active}>
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">+</span>
-          <strong>{meta.shop.name}</strong>
-        </div>
+        <Brand name={meta.shop.name} />
+        <ViewTabs nav={nav} />
         <SearchBox
           inputRef={searchRef}
           priceLevel={bill.priceLevel}
@@ -215,14 +204,7 @@ export default function Pos({ me, onLogout }) {
           onEmptyKey={onEmptySearchKey}
           onNotFound={(q) => notify(`ไม่พบสินค้า "${q}"`, 'error')}
         />
-        <nav className="top-links">
-          <a href="/reports/">รายงาน</a>
-          {me.is_staff && <a href="/admin/">หลังร้าน</a>}
-          <span className="muted">{me.name}</span>
-          <button type="button" className="btn small" onClick={onLogout}>
-            ออกจากระบบ
-          </button>
-        </nav>
+        <TopLinks nav={nav} />
       </header>
 
       {lastSale && (
@@ -282,11 +264,7 @@ export default function Pos({ me, onLogout }) {
         )}
       </footer>
 
-      {toast && (
-        <div className={`toast ${toast.kind}`} role="status">
-          {toast.message}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {modal === 'customer' && (
         <CustomerModal
