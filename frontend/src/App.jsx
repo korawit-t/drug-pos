@@ -4,6 +4,7 @@ import Login from './Login.jsx';
 import { viewFromHash } from './nav.jsx';
 import Pos from './pos/Pos.jsx';
 import Receive from './receive/Receive.jsx';
+import ImportData from './setup/Import.jsx';
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined: checking, null: logged out
@@ -58,6 +59,7 @@ export default function App() {
     <>
       <Pos meta={meta} nav={nav} active={view === 'pos'} />
       {opened.has('receive') && <Receive meta={meta} nav={nav} active={view === 'receive'} />}
+      {opened.has('import') && <ImportData meta={meta} nav={nav} active={view === 'import'} />}
     </>
   );
 }

@@ -2,10 +2,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Prefetch, Q, Sum
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from ninja import Field, Router, Schema
+from ninja import Field, File, Form, Router, Schema, UploadedFile
+from ninja.errors import HttpError
 
+from .importer import FileFormatError, import_rows, read_rows, template_workbook
 from .models import Allergen, Lot, Product, ProductUnit, Purchase, Supplier
 from .services import PurchaseData, PurchaseLine, delete_draft, last_costs, save_purchase
 
@@ -311,3 +314,63 @@ def update_purchase(request, purchase_id: int, data: PurchaseIn):
 def remove_draft(request, purchase_id: int):
     delete_draft(get_object_or_404(Purchase, pk=purchase_id))
     return {"ok": True}
+
+
+# --- Importing the drug master ----------------------------------------------
+
+MAX_UPLOAD = 10 * 1024 * 1024
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class ImportIssueOut(Schema):
+    row: int
+    message: str
+
+
+class ImportResultOut(Schema):
+    rows: int
+    products_created: int
+    products_updated: int
+    units_created: int
+    units_updated: int
+    stock_lines: int
+    stock_base_qty: int
+    committed: bool
+    errors: list[ImportIssueOut]
+    warnings: list[ImportIssueOut]
+    error_count: int
+    warning_count: int
+
+
+@router.get("/import/template")
+def import_template(request):
+    """ไฟล์ตัวอย่างสำหรับกรอกข้อมูลยา"""
+    response = HttpResponse(template_workbook(), content_type=XLSX_TYPE)
+    response["Content-Disposition"] = 'attachment; filename="drugpos-import-template.xlsx"'
+    return response
+
+
+@router.post("/import/products", response=ImportResultOut)
+def import_products(
+    request,
+    file: UploadedFile = File(...),
+    with_stock: bool = Form(False),
+    commit: bool = Form(False),
+):
+    """ตรวจไฟล์ (commit=false) หรือ นำเข้าจริง (commit=true) — ถ้ามีข้อผิดพลาดจะไม่เขียนอะไรเลย"""
+    if not request.user.is_staff:
+        raise HttpError(403, "นำเข้าข้อมูลได้เฉพาะผู้ดูแลร้าน")
+    if file.size > MAX_UPLOAD:
+        raise HttpError(400, "ไฟล์ใหญ่เกิน 10 MB")
+    try:
+        rows = read_rows(file.read(), file.name)
+    except FileFormatError as exc:
+        raise HttpError(400, exc.message)
+    result = import_rows(rows, with_stock=with_stock, user=request.user, commit=commit, source=file.name)
+    return {
+        **vars(result),
+        "errors": [vars(issue) for issue in result.errors[:50]],
+        "warnings": [vars(issue) for issue in result.warnings[:50]],
+        "error_count": len(result.errors),
+        "warning_count": len(result.warnings),
+    }

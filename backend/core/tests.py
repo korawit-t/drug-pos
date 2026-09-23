@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.test import SimpleTestCase
 
 from .promptpay import crc16_ccitt, generate_payload
-from .thai import thai_date
+from .thai import parse_expiry, thai_date
 
 
 class PromptPayTests(SimpleTestCase):
@@ -34,3 +34,20 @@ class ThaiDateTests(SimpleTestCase):
         self.assertEqual(thai_date(d), "21/09/2569")
         self.assertEqual(thai_date(d, "long"), "21 ก.ย. 2569")
         self.assertEqual(thai_date(d, "month"), "09/2569")
+
+
+class ParseExpiryTests(SimpleTestCase):
+    def test_reads_the_forms_printed_on_boxes(self):
+        self.assertEqual(parse_expiry("03/2028"), datetime.date(2028, 3, 31))
+        self.assertEqual(parse_expiry("03/71"), datetime.date(2028, 3, 31))
+        self.assertEqual(parse_expiry("31/03/2571"), datetime.date(2028, 3, 31))
+        self.assertEqual(parse_expiry("2028-03-31"), datetime.date(2028, 3, 31))
+        self.assertEqual(parse_expiry("2/2028"), datetime.date(2028, 2, 29))
+
+    def test_excel_date_cells_pass_through(self):
+        self.assertEqual(parse_expiry(datetime.datetime(2028, 3, 31, 9, 0)), datetime.date(2028, 3, 31))
+        self.assertEqual(parse_expiry(datetime.date(2028, 3, 31)), datetime.date(2028, 3, 31))
+
+    def test_unreadable_values_are_none(self):
+        for value in ["", None, "มีนาคม 2028", "13/2028", "31/02/2028", "3/2/1/2028"]:
+            self.assertIsNone(parse_expiry(value), value)

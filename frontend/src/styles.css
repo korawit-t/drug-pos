@@ -243,6 +243,11 @@ kbd {
   color: var(--amber-text);
 }
 
+.alert.success {
+  background: var(--green-bg);
+  color: var(--green-text);
+}
+
 .alert.info {
   background: var(--surface-2);
   color: var(--muted);
@@ -1174,4 +1179,81 @@ kbd {
 
 .recent .pick-list li {
   align-items: flex-start;
+}
+
+/* Setup / import ---------------------------------------------------------- */
+
+.setup-main {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.setup-main .panel {
+  width: 100%;
+  max-width: 900px;
+}
+
+.setup-main h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.steps {
+  margin: 4px 0;
+  padding-left: 22px;
+  line-height: 1.9;
+}
+
+.steps li {
+  margin: 4px 0;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.summary-card {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.summary-value {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.issues {
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.issues.error {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
+
+.issues.warning {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+}
+
+.issues ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+input[type='file'] {
+  padding: 8px;
+  background: var(--surface-2);
 }
