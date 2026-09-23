@@ -3,12 +3,13 @@ from types import SimpleNamespace
 
 from django.contrib import admin
 from django.core.management import call_command
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import User
 
 
+@override_settings(DEBUG=True)  # seed_demo refuses to run on a shop machine
 class AdminSmokeTests(TestCase):
     """Every back-office page opens with the demo data loaded."""
 

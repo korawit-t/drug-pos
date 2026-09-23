@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -128,6 +129,11 @@ class Command(BaseCommand):
     help = "สร้างข้อมูลตัวอย่างสำหรับทดลองระบบ (ใช้กับฐานข้อมูลใหม่เท่านั้น)"
 
     def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError(
+                "เครื่องนี้ตั้งเป็นโหมดใช้งานจริง (DRUGPOS_DEBUG=0) — ข้อมูลตัวอย่างพร้อมรหัสผ่านที่เปิดเผยใน README "
+                "ห้ามลงในเครื่องที่ใช้จริง"
+            )
         if Product.objects.exists() or User.objects.exists():
             raise CommandError("ฐานข้อมูลนี้มีข้อมูลอยู่แล้ว — seed_demo ใช้กับฐานข้อมูลใหม่เท่านั้น")
         with transaction.atomic():
@@ -139,7 +145,7 @@ class Command(BaseCommand):
             "  staff   staff1234  (พนักงานหน้าร้าน)\n"
             "  pharm1  pharm1234  PIN 1234  ภก.สมศรี ใจดี\n"
             "  pharm2  pharm1234  PIN 5678  ภญ.วิไล รักษ์ยา\n"
-            "เปลี่ยนรหัสผ่านทั้งหมดก่อนใช้งานจริง"
+            "เปลี่ยนรหัสผ่านและ PIN ทั้งหมดก่อนใช้งานจริง แล้วตรวจด้วย: python manage.py check_security"
         )
 
     def _seed(self):

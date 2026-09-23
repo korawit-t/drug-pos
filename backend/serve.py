@@ -25,12 +25,27 @@ def main():
     from waitress import serve
 
     application = get_wsgi_application()
+    _print_security_warnings()
     try:
         ip = socket.gethostbyname(socket.gethostname())
     except OSError:
         ip = "<ip-of-this-pc>"
     print(f"Drug POS is running: http://{ip}:{args.port}  (Ctrl+C to stop)")
     serve(application, listen=f"*:{args.port}", threads=args.threads)
+
+
+def _print_security_warnings():
+    """Loud, but not fatal: the shop still needs to be able to sell."""
+    try:
+        from core.security import security_warnings
+
+        warnings = security_warnings()
+    except Exception:  # a fresh install without a database yet
+        return
+    for warning in warnings:
+        print(f"  !! {warning}")
+    if warnings:
+        print("     (python manage.py check_security)")
 
 
 if __name__ == "__main__":

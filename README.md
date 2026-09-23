@@ -104,6 +104,13 @@ cd frontend
 npm test
 ```
 
+ตรวจว่ายังมีรหัสผ่าน/PIN ตัวอย่างค้างอยู่ไหม (ใช้ก่อนเปิดใช้งานจริง):
+
+```bash
+cd backend
+.venv/bin/python manage.py check_security
+```
+
 ## ติดตั้งในร้าน (Windows)
 
 > สคริปต์ Windows ยังไม่ได้ทดสอบบนเครื่อง Windows จริง
@@ -120,9 +127,18 @@ npm test
 5. เครื่องหน้าร้าน: แก้ IP ใน `scripts\windows\counter-kiosk.bat` แล้ววาง shortcut ไว้ที่ desktop
 6. หลังร้าน (`/admin/`): ตั้งข้อมูลร้าน, เบอร์พร้อมเพย์, ชื่อระดับราคา, เพิ่มผู้ใช้และตั้ง PIN เภสัชกร
 7. นำเข้าข้อมูลยาและยอดยกมาจาก Excel ที่หน้า "นำเข้าข้อมูล" (หรือบันทึกยอดยกมาทีละรายการที่หน้ารับยาเข้า)
-8. **สำรองข้อมูลทุกวัน**: ตั้ง Task Scheduler ให้รัน `scripts\windows\backup.bat D:\DrugPOS-backup` (หรือโฟลเดอร์ Google Drive) — ห้าม copy ไฟล์ฐานข้อมูลตรง ๆ ตอนระบบทำงานอยู่
+8. ตรวจความปลอดภัย: `backend\.venv\Scripts\python backend\manage.py check_security`
+9. **สำรองข้อมูลทุกวัน**: ตั้ง Task Scheduler ให้รัน `scripts\windows\backup.bat D:\DrugPOS-backup` (หรือโฟลเดอร์ Google Drive) — ห้าม copy ไฟล์ฐานข้อมูลตรง ๆ ตอนระบบทำงานอยู่
 
 หลัง build frontend ใหม่ทุกครั้ง ให้รัน `backend\.venv\Scripts\python backend\manage.py collectstatic --noinput`
+
+### ความปลอดภัยก่อนเปิดใช้จริง
+
+- **เปลี่ยนรหัสผ่านทุกบัญชีและ PIN ของเภสัชกร** รหัสตัวอย่างในไฟล์นี้เป็นข้อมูลสาธารณะ ใครก็อ่านได้
+- รันด้วย `DRUGPOS_DEBUG=0` (`start-server.bat` ตั้งให้แล้ว) ไม่เช่นนั้นหน้าจอ error จะเปิดเผยรายละเอียดภายในระบบ
+- `python manage.py check_security` ตรวจสองข้อข้างบนให้อัตโนมัติ และเซิร์ฟเวอร์จะเตือนตอนเปิดถ้ายังไม่ได้แก้
+- `seed_demo` จะไม่ยอมรันบนเครื่องที่ตั้ง `DRUGPOS_DEBUG=0` เพื่อไม่ให้ข้อมูลตัวอย่างหลุดเข้าเครื่องจริง
+- ระบบออกแบบให้อยู่ใน **LAN ของร้านเท่านั้น** ยังไม่มี HTTPS จึงไม่ควรเปิด port ออกอินเทอร์เน็ตหรือ forward จาก router
 
 ### เครื่องพิมพ์
 
