@@ -277,3 +277,83 @@ class PurchaseItem(models.Model):
     @property
     def base_qty(self) -> int:
         return self.qty * self.unit.factor
+
+
+class StockCount(models.Model):
+    """
+    ใบนับสต็อก / ปรับยอด — นับของจริงบนชั้นแล้วปรับยอดในระบบให้ตรง
+    ส่วนต่างของแต่ละ lot กลายเป็น StockMovement แบบ adjust ตอนบันทึก แก้ไม่ได้อีก
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "ร่าง"
+        POSTED = "posted", "ปรับยอดแล้ว"
+
+    counted_date = models.DateField("วันที่นับ")
+    note = models.CharField("หมายเหตุ", max_length=200, blank=True)
+    status = models.CharField("สถานะ", max_length=10, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField("สร้างเมื่อ", default=timezone.now, editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="ผู้นับ", null=True, blank=True, editable=False,
+        on_delete=models.PROTECT, related_name="+",
+    )
+    posted_at = models.DateTimeField("ปรับยอดเมื่อ", null=True, blank=True)
+    posted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="ผู้บันทึก", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="+",
+    )
+    # Adjusting stock is how losses get hidden, so a pharmacist's PIN signs every posting.
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="เภสัชกรผู้อนุมัติ", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "ใบนับสต็อก / ปรับยอด"
+        verbose_name_plural = "ใบนับสต็อก / ปรับยอด"
+        ordering = ["-counted_date", "-id"]
+
+    def __str__(self):
+        return f"นับสต็อก {self.counted_date}"
+
+
+class StockCountItem(models.Model):
+    """
+    หนึ่ง lot ที่นับ — เก็บทั้งยอดที่ระบบมีตอนนับและจำนวนที่นับได้จริง
+    ยอดในระบบ (system_qty) คือสิ่งที่คนนับเห็นตอนกรอก ถ้าตอนบันทึกไม่ตรงกับของจริงแล้ว
+    (มีการขายคั่น) จะบันทึกไม่ได้ ต้องดึงยอดล่าสุดมาตรวจก่อน
+    """
+
+    class Reason(models.TextChoices):
+        COUNT = "count", "นับได้ตามจริง"
+        DAMAGED = "damaged", "ชำรุด / แตก / หก"
+        EXPIRED = "expired", "หมดอายุ — ทิ้งหรือส่งคืน"
+        LOST = "lost", "สูญหาย"
+        OTHER = "other", "อื่น ๆ (ระบุในหมายเหตุ)"
+
+    count = models.ForeignKey(StockCount, on_delete=models.CASCADE, related_name="items")
+    lot = models.ForeignKey(Lot, verbose_name="Lot", on_delete=models.PROTECT, related_name="count_items")
+    system_qty = models.IntegerField("ยอดในระบบตอนนับ (หน่วยเล็กสุด)")
+    counted_qty = models.IntegerField("นับได้ (หน่วยเล็กสุด)", null=True, blank=True)
+    reason = models.CharField("สาเหตุที่ต่าง", max_length=20, choices=Reason.choices, blank=True)
+    note = models.CharField("หมายเหตุ", max_length=200, blank=True)
+    # เป็น one-to-one จริง ๆ: หนึ่งรายการที่ยอดไม่ตรง = หนึ่งแถวใน ledger (ยอดตรงไม่มี movement)
+    movement = models.OneToOneField(
+        StockMovement, null=True, blank=True, editable=False, on_delete=models.PROTECT, related_name="count_item"
+    )
+
+    class Meta:
+        verbose_name = "รายการนับสต็อก"
+        verbose_name_plural = "รายการนับสต็อก"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["count", "lot"], name="unique_lot_per_count"),
+        ]
+
+    def __str__(self):
+        return f"{self.lot} · นับได้ {self.counted_qty}"
+
+    @property
+    def difference(self) -> int | None:
+        """บวก = ของมากกว่าในระบบ, ลบ = ของหาย/แตก/ทิ้ง"""
+        return None if self.counted_qty is None else self.counted_qty - self.system_qty

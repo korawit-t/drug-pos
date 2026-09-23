@@ -1,4 +1,4 @@
-export const VIEWS = { pos: '#/', receive: '#/receive', import: '#/import' };
+export const VIEWS = { pos: '#/', receive: '#/receive', count: '#/count', import: '#/import' };
 
 export const viewFromHash = () => {
   const found = Object.entries(VIEWS).find(([, hash]) => hash === window.location.hash);
@@ -26,6 +26,7 @@ export function ViewTabs({ nav }) {
     <nav className="view-tabs" aria-label="หน้าจอ">
       {tab('pos', 'ขายหน้าร้าน')}
       {tab('receive', 'รับยาเข้า')}
+      {tab('count', 'นับสต็อก')}
     </nav>
   );
 }

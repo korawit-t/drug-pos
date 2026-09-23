@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from core.models import ShopSettings
-from inventory.models import Lot, Purchase, PurchaseItem
+from inventory.models import Lot, Purchase, PurchaseItem, StockMovement
 from sales.models import Sale, SaleItem
 
 
@@ -75,3 +75,15 @@ def expiry(request):
         .order_by("expiry_date", "product__trade_name")
     )
     return render(request, "reports/expiry.html", _context(request, lots=lots, days=days))
+
+
+@login_required
+def adjustments(request):
+    """ประวัติการปรับยอดสต็อก — ของหาย ชำรุด หมดอายุ และการนับที่ไม่ตรง"""
+    start, end = _date_range(request)
+    movements = (
+        StockMovement.objects.filter(kind=StockMovement.Kind.ADJUST, created_at__date__range=(start, end))
+        .select_related("lot__product", "created_by", "count_item__count__created_by")
+        .order_by("created_at", "id")
+    )
+    return render(request, "reports/adjustments.html", _context(request, movements=movements))

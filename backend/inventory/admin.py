@@ -8,7 +8,19 @@ from core.models import ShopSettings
 from core.thai import thai_date
 
 from .allergy import AllergyIndex
-from .models import Allergen, Lot, PriceLevel, Product, ProductUnit, Purchase, PurchaseItem, StockMovement, Supplier
+from .models import (
+    Allergen,
+    Lot,
+    PriceLevel,
+    Product,
+    ProductUnit,
+    Purchase,
+    PurchaseItem,
+    StockCount,
+    StockCountItem,
+    StockMovement,
+    Supplier,
+)
 from .services import StockError, post_purchase
 
 
@@ -207,3 +219,35 @@ class StockMovementAdmin(ReadOnlyAdmin):
     list_display = ("created_at", "kind", "lot", "qty", "created_by", "note")
     list_filter = ("kind",)
     search_fields = ("lot__product__trade_name", "lot__lot_no", "note")
+
+
+class StockCountItemInline(admin.TabularInline):
+    model = StockCountItem
+    extra = 0
+    can_delete = False
+    fields = ("lot", "system_qty", "counted_qty", "difference", "reason", "note")
+    readonly_fields = fields
+
+    @admin.display(description="ส่วนต่าง")
+    def difference(self, obj):
+        return "-" if obj.difference is None else f"{obj.difference:+d}"
+
+
+@admin.register(StockCount)
+class StockCountAdmin(ReadOnlyAdmin):
+    """
+    ดูอย่างเดียว — การปรับยอดต้องทำที่หน้า "นับสต็อก" เพราะต้องมี PIN เภสัชกรกำกับทุกครั้ง
+    """
+
+    list_display = ("counted_date", "status", "item_count", "difference_count", "approved_by", "created_by")
+    list_filter = ("status",)
+    date_hierarchy = "counted_date"
+    inlines = [StockCountItemInline]
+
+    @admin.display(description="จำนวน lot ที่นับ")
+    def item_count(self, obj):
+        return obj.items.count()
+
+    @admin.display(description="ยอดไม่ตรง")
+    def difference_count(self, obj):
+        return sum(1 for item in obj.items.all() if item.difference not in (None, 0))

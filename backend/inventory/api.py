@@ -8,9 +8,24 @@ from django.utils import timezone
 from ninja import Field, File, Form, Router, Schema, UploadedFile
 from ninja.errors import HttpError
 
+from accounts.models import PinAttempt
+from accounts.services import client_ip, verify_pin
+
 from .importer import FileFormatError, import_rows, read_rows, template_workbook
-from .models import Allergen, Lot, Product, ProductUnit, Purchase, Supplier
-from .services import PurchaseData, PurchaseLine, delete_draft, last_costs, save_purchase
+from .models import Allergen, Lot, Product, ProductUnit, Purchase, StockCount, Supplier
+from .services import (
+    PurchaseData,
+    PurchaseLine,
+    StockCountData,
+    StockCountLine,
+    countable_lots,
+    delete_count_draft,
+    delete_draft,
+    expired_lots,
+    last_costs,
+    save_purchase,
+    save_stock_count,
+)
 
 router = Router(tags=["products"])
 
@@ -374,3 +389,222 @@ def import_products(
         "error_count": len(result.errors),
         "warning_count": len(result.warnings),
     }
+
+
+# --- Stock count / adjustment (นับสต็อก / ปรับยอด) ---------------------------
+
+
+class CountUnitOut(Schema):
+    name: str
+    factor: int
+
+
+class CountLotOut(Schema):
+    id: int
+    product_id: int
+    product_name: str
+    base_unit: str
+    storage_location: str
+    lot_no: str
+    expiry_date: date
+    qty: int  # ยอดในระบบตอนนี้
+    expired: bool
+    units: list[CountUnitOut]  # หน่วยใหญ่ไว้ให้นับเป็นกล่อง/แผง
+
+
+def count_lot_payload(lot: Lot, today: date) -> dict:
+    product = lot.product
+    return {
+        "id": lot.pk,
+        "product_id": product.pk,
+        "product_name": product.display_name,
+        "base_unit": product.base_unit,
+        "storage_location": product.storage_location,
+        "lot_no": lot.lot_no,
+        "expiry_date": lot.expiry_date,
+        "qty": lot.qty_on_hand,
+        "expired": lot.expiry_date < today,
+        "units": [
+            {"name": unit.name, "factor": unit.factor}
+            for unit in sorted(product.units.all(), key=lambda u: u.factor)
+            if unit.factor > 1
+        ],
+    }
+
+
+def _with_product(lots):
+    return lots.select_related("product").prefetch_related("product__units")
+
+
+@router.get("/stock/lots", response=list[CountLotOut])
+def list_lots(request, product_id: int | None = None, ids: str = ""):
+    """
+    lot ที่อยู่บนชั้น (รวมของหมดอายุ) สำหรับหน้านับสต็อก
+    product_id: ทุก lot ที่ยังมีของของยาตัวนั้น · ids: lot ที่ระบุ (ใช้ดึงยอดล่าสุด แม้ยอดจะเหลือ 0)
+    """
+    today = timezone.localdate()
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    if id_list:
+        lots = Lot.objects.filter(pk__in=id_list[:200]).order_by("expiry_date", "id")
+    elif product_id:
+        lots = countable_lots(get_object_or_404(Product, pk=product_id))
+    else:
+        return []
+    return [count_lot_payload(lot, today) for lot in _with_product(lots)]
+
+
+@router.get("/stock/lots/expired", response=list[CountLotOut])
+def list_expired_lots(request):
+    today = timezone.localdate()
+    return [count_lot_payload(lot, today) for lot in _with_product(expired_lots(today))[:200]]
+
+
+class StockCountItemOut(Schema):
+    id: int
+    lot: CountLotOut
+    system_qty: int
+    counted_qty: int | None
+    difference: int | None
+    reason: str
+    reason_label: str
+    note: str
+
+
+class StockCountOut(Schema):
+    id: int
+    status: str
+    counted_date: date
+    note: str
+    created_by: str
+    posted_by: str
+    approved_by: str
+    posted_at: datetime | None
+    items: list[StockCountItemOut]
+
+
+class StockCountRowOut(Schema):
+    id: int
+    status: str
+    counted_date: date
+    note: str
+    item_count: int
+    diff_count: int
+    created_by: str
+
+
+def stock_count_payload(count: StockCount) -> dict:
+    today = timezone.localdate()
+    items = count.items.select_related("lot__product").prefetch_related("lot__product__units").order_by("id")
+    return {
+        "id": count.pk,
+        "status": count.status,
+        "counted_date": count.counted_date,
+        "note": count.note,
+        "created_by": _name(count.created_by),
+        "posted_by": _name(count.posted_by),
+        "approved_by": _name(count.approved_by),
+        "posted_at": count.posted_at,
+        "items": [
+            {
+                "id": item.pk,
+                "lot": count_lot_payload(item.lot, today),
+                "system_qty": item.system_qty,
+                "counted_qty": item.counted_qty,
+                "difference": item.difference,
+                "reason": item.reason,
+                "reason_label": item.get_reason_display() if item.reason else "",
+                "note": item.note,
+            }
+            for item in items
+        ],
+    }
+
+
+class StockCountLineIn(Schema):
+    lot_id: int
+    system_qty: int = Field(ge=0)
+    counted_qty: int | None = Field(default=None, ge=0)
+    reason: str = ""
+    note: str = ""
+
+
+class StockCountIn(Schema):
+    counted_date: date
+    note: str = ""
+    lines: list[StockCountLineIn] = []
+    post: bool = False  # true: ปรับยอดเข้าสต็อกด้วย (ต้องมี PIN เภสัชกร)
+    pharmacist_id: int | None = None
+    pin: str = ""
+
+
+def _count_data(data: StockCountIn) -> StockCountData:
+    return StockCountData(
+        counted_date=data.counted_date,
+        note=data.note,
+        lines=[StockCountLine(l.lot_id, l.system_qty, l.counted_qty, l.reason, l.note) for l in data.lines],
+    )
+
+
+def _approval(request, data: StockCountIn):
+    """ปรับยอดต้องผ่าน PIN เภสัชกรเสมอ — เก็บลงประวัติการใส่ PIN เหมือนการยกเลิกบิล"""
+    if not data.post:
+        return None
+    if not data.pharmacist_id:
+        raise HttpError(400, "เลือกเภสัชกรผู้อนุมัติก่อน")
+    differences = sum(1 for l in data.lines if l.counted_qty is not None and l.counted_qty != l.system_qty)
+    return verify_pin(
+        pharmacist_id=data.pharmacist_id,
+        pin=data.pin,
+        action=PinAttempt.Action.ADJUST,
+        requested_by=request.user,
+        detail=f"ปรับยอดสต็อก นับวันที่ {data.counted_date} · {len(data.lines)} lot · ยอดไม่ตรง {differences}",
+        terminal=client_ip(request),
+    )
+
+
+@router.get("/stock-counts", response=list[StockCountRowOut])
+def list_stock_counts(request, limit: int = 30):
+    differs = ~Q(items__counted_qty=F("items__system_qty"))
+    counts = (
+        StockCount.objects.select_related("created_by")
+        .annotate(item_count=Count("items"), diff_count=Count("items", filter=differs))
+        .order_by("status", "-counted_date", "-id")[: min(limit, 100)]
+    )
+    return [
+        {
+            "id": c.pk,
+            "status": c.status,
+            "counted_date": c.counted_date,
+            "note": c.note,
+            "item_count": c.item_count,
+            "diff_count": c.diff_count,
+            "created_by": _name(c.created_by),
+        }
+        for c in counts
+    ]
+
+
+@router.get("/stock-counts/{count_id}", response=StockCountOut)
+def get_stock_count(request, count_id: int):
+    return stock_count_payload(get_object_or_404(StockCount, pk=count_id))
+
+
+@router.post("/stock-counts", response=StockCountOut)
+def create_stock_count(request, data: StockCountIn):
+    pharmacist = _approval(request, data)
+    count = save_stock_count(_count_data(data), request.user, post=data.post, approved_by=pharmacist)
+    return stock_count_payload(count)
+
+
+@router.put("/stock-counts/{count_id}", response=StockCountOut)
+def update_stock_count(request, count_id: int, data: StockCountIn):
+    count = get_object_or_404(StockCount, pk=count_id)
+    pharmacist = _approval(request, data)
+    saved = save_stock_count(_count_data(data), request.user, count=count, post=data.post, approved_by=pharmacist)
+    return stock_count_payload(saved)
+
+
+@router.delete("/stock-counts/{count_id}")
+def remove_count_draft(request, count_id: int):
+    delete_count_draft(get_object_or_404(StockCount, pk=count_id))
+    return {"ok": True}

@@ -46,6 +46,7 @@ class PinAttempt(models.Model):
     class Action(models.TextChoices):
         DISPENSE = "dispense", "ยืนยันจ่ายยา"
         VOID = "void", "ยกเลิกบิล"
+        ADJUST = "adjust", "ปรับยอดสต็อก"
 
     created_at = models.DateTimeField("เวลา", auto_now_add=True)
     pharmacist = models.ForeignKey(

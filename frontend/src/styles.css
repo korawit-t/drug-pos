@@ -1181,6 +1181,87 @@ kbd {
   align-items: flex-start;
 }
 
+/* Stock count ------------------------------------------------------------ */
+
+.count-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.count-table .col-count {
+  width: 178px;
+}
+
+.count-table .col-diff {
+  width: 92px;
+}
+
+.count-table .col-reason {
+  width: 190px;
+}
+
+.count-table .col-num {
+  width: 84px;
+  white-space: nowrap;
+}
+
+.count-fields {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.count-fields input {
+  flex: 0 0 74px;
+  width: 74px;
+  text-align: right;
+}
+
+.count-fields select {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.count-fields.loose {
+  margin-top: 4px;
+}
+
+.count-fields.loose input {
+  width: 64px;
+}
+
+.col-reason select {
+  margin-bottom: 4px;
+}
+
+.col-diff input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.col-diff input.shortage {
+  color: var(--red-text);
+  background: var(--red-bg);
+  font-weight: 600;
+}
+
+.col-diff input.surplus {
+  color: var(--green-text);
+  background: var(--green-bg);
+  font-weight: 600;
+}
+
+.count-table tr.has-difference td {
+  background: var(--surface-2);
+}
+
+.surplus-text {
+  color: var(--green-text);
+}
+
 /* Setup / import ---------------------------------------------------------- */
 
 .setup-main {

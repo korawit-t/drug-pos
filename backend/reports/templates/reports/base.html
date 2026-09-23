@@ -48,6 +48,6 @@
   {% block period %} · ระหว่างวันที่ {{ start|thaidate:"long" }} ถึง {{ end|thaidate:"long" }}{% endblock %}
 </div>
 {% block content %}{% endblock %}
-<p class="note">รูปแบบคอลัมน์ในต้นแบบนี้ยังต้องเทียบกับแบบฟอร์มทางการของ อย. ก่อนใช้งานจริง</p>
+{% block formnote %}<p class="note">รูปแบบคอลัมน์ในต้นแบบนี้ยังต้องเทียบกับแบบฟอร์มทางการของ อย. ก่อนใช้งานจริง</p>{% endblock %}
 </body>
 </html>

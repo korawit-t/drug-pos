@@ -7,7 +7,17 @@ from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .models import Lot, Product, ProductUnit, Purchase, PurchaseItem, StockMovement, Supplier
+from .models import (
+    Lot,
+    Product,
+    ProductUnit,
+    Purchase,
+    PurchaseItem,
+    StockCount,
+    StockCountItem,
+    StockMovement,
+    Supplier,
+)
 
 
 class StockError(Exception):
@@ -237,3 +247,144 @@ def stock_mismatches() -> list[Lot]:
     return list(
         Lot.objects.annotate(ledger=Coalesce(Sum("movements__qty"), 0)).exclude(qty_on_hand=F("ledger"))
     )
+
+
+# --- นับสต็อก / ปรับยอด -------------------------------------------------------
+
+
+def countable_lots(product: Product):
+    """lot ที่อยู่บนชั้นจริง — รวมของหมดอายุด้วย เพราะยังต้องนับและตัดทิ้ง"""
+    return Lot.objects.filter(product=product, qty_on_hand__gt=0).order_by("expiry_date", "id")
+
+
+def expired_lots(today=None):
+    """ยาหมดอายุที่ยังค้างอยู่บนชั้นทั้งร้าน — ตัดทิ้งทีเดียวจากหน้านับสต็อกได้"""
+    today = today or timezone.localdate()
+    return Lot.objects.filter(qty_on_hand__gt=0, expiry_date__lt=today).order_by("expiry_date", "id")
+
+
+@dataclass
+class StockCountLine:
+    lot_id: int
+    system_qty: int  # ยอดที่คนนับเห็นตอนกรอก
+    counted_qty: int | None = None  # None: ยังไม่ได้นับ (ร่างเท่านั้น)
+    reason: str = ""
+    note: str = ""
+
+
+@dataclass
+class StockCountData:
+    counted_date: date
+    note: str = ""
+    lines: list[StockCountLine] = field(default_factory=list)
+
+
+def save_stock_count(
+    data: StockCountData, user, count: StockCount | None = None, post: bool = False, approved_by=None
+) -> StockCount:
+    """
+    เก็บใบนับสต็อกจากหน้าจอ ร่างกรอกไม่ครบได้; post=True คือปรับยอดเข้าสต็อกด้วย
+    ถ้าปรับไม่สำเร็จจะไม่บันทึกอะไรเลย
+    """
+    with transaction.atomic():
+        if count is not None:
+            count = StockCount.objects.get(pk=count.pk)
+            if count.status == StockCount.Status.POSTED:
+                raise StockError("ใบนับสต็อกนี้ปรับยอดแล้ว แก้ไขไม่ได้")
+        if data.counted_date > timezone.localdate():
+            raise StockError("วันที่นับเป็นวันในอนาคต")
+
+        lots = Lot.objects.select_related("product").in_bulk([line.lot_id for line in data.lines])
+        seen = set()
+        for number, line in enumerate(data.lines, 1):
+            lot = lots.get(line.lot_id)
+            if lot is None:
+                raise StockError(f"รายการที่ {number}: ไม่พบ lot นี้")
+            if lot.pk in seen:
+                raise StockError(f"{lot.product.display_name} lot {lot.lot_no}: อยู่ในใบนี้แล้ว")
+            seen.add(lot.pk)
+            if line.counted_qty is not None and line.counted_qty < 0:
+                raise StockError(f"รายการที่ {number} ({lot.product.display_name}): จำนวนที่นับได้ติดลบไม่ได้")
+            if line.reason and line.reason not in StockCountItem.Reason.values:
+                raise StockError(f"รายการที่ {number} ({lot.product.display_name}): สาเหตุไม่ถูกต้อง")
+
+        if count is None:
+            count = StockCount(created_by=user if getattr(user, "is_authenticated", False) else None)
+        count.counted_date = data.counted_date
+        count.note = data.note.strip()[:200]
+        count.save()
+
+        # A draft owns its lines outright (nothing has touched stock yet), so replace them.
+        count.items.all().delete()
+        StockCountItem.objects.bulk_create(
+            StockCountItem(
+                count=count,
+                lot=lots[line.lot_id],
+                system_qty=line.system_qty,
+                counted_qty=line.counted_qty,
+                reason=line.reason,
+                note=line.note.strip()[:200],
+            )
+            for line in data.lines
+        )
+        if post:
+            post_stock_count(count, user, approved_by)
+    count.refresh_from_db()
+    return count
+
+
+def post_stock_count(count: StockCount, user, approved_by) -> StockCount:
+    """ปรับยอดตามที่นับได้: ตรวจทั้งใบก่อน แล้วลง ledger เฉพาะ lot ที่ยอดไม่ตรง"""
+    with transaction.atomic():
+        count = StockCount.objects.get(pk=count.pk)
+        if count.status == StockCount.Status.POSTED:
+            raise StockError("ใบนับสต็อกนี้ปรับยอดไปแล้ว")
+        if approved_by is None or not approved_by.is_pharmacist:
+            raise StockError("ต้องให้เภสัชกรอนุมัติก่อนปรับยอด")
+        items = list(count.items.select_related("lot__product").order_by("id"))
+        if not items:
+            raise StockError("ใบนับสต็อกนี้ยังไม่มีรายการ")
+
+        # ยอดล่าสุดจริง ๆ ไม่ใช่ค่าที่ติดมากับ select_related
+        current = dict(Lot.objects.filter(pk__in=[item.lot_id for item in items]).values_list("pk", "qty_on_hand"))
+        for number, item in enumerate(items, 1):
+            lot = item.lot
+            name = f"{lot.product.display_name} lot {lot.lot_no}"
+            if item.counted_qty is None:
+                raise StockError(f"รายการที่ {number} ({name}): ยังไม่ได้กรอกจำนวนที่นับได้")
+            if current[lot.pk] != item.system_qty:
+                raise StockError(
+                    f"{name}: ยอดในระบบเปลี่ยนเป็น {current[lot.pk]} {lot.product.base_unit} ระหว่างที่นับ "
+                    f"(ตอนนับคือ {item.system_qty}) — กด “ดึงยอดล่าสุด” แล้วตรวจรายการนี้อีกครั้ง"
+                )
+            if item.counted_qty != item.system_qty and not item.reason:
+                raise StockError(f"รายการที่ {number} ({name}): เลือกสาเหตุที่ยอดไม่ตรง")
+            if item.reason == StockCountItem.Reason.OTHER and not item.note.strip():
+                raise StockError(f"รายการที่ {number} ({name}): เลือกสาเหตุ “อื่น ๆ” ต้องเขียนหมายเหตุด้วย")
+
+        for item in items:
+            difference = item.counted_qty - item.system_qty
+            if not difference:
+                continue  # นับแล้วตรง — เก็บไว้เป็นหลักฐานว่านับ ไม่ต้องลง ledger
+            note = item.get_reason_display()
+            if item.note.strip():
+                note = f"{note}: {item.note.strip()}"
+            item.movement = record_movement(
+                item.lot, StockMovement.Kind.ADJUST, difference, user=approved_by, note=note
+            )
+            item.save(update_fields=["movement"])
+
+        count.status = StockCount.Status.POSTED
+        count.posted_at = timezone.now()
+        count.posted_by = user if getattr(user, "is_authenticated", False) else None
+        count.approved_by = approved_by
+        count.save(update_fields=["status", "posted_at", "posted_by", "approved_by"])
+    return count
+
+
+def delete_count_draft(count: StockCount) -> None:
+    with transaction.atomic():
+        count = StockCount.objects.get(pk=count.pk)
+        if count.status == StockCount.Status.POSTED:
+            raise StockError("ใบนับสต็อกที่ปรับยอดแล้วลบไม่ได้")
+        count.delete()

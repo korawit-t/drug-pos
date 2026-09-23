@@ -1,0 +1,43 @@
+{% extends "reports/base.html" %}
+{% load thai %}
+{% block title %}ประวัติการปรับยอดสต็อก{% endblock %}
+{% block heading %}ประวัติการปรับยอดสต็อก{% endblock %}
+{% block formnote %}{% endblock %}{# รายงานภายในร้าน ไม่ใช่แบบฟอร์มของ อย. #}
+{% block content %}
+<table>
+  <thead>
+    <tr>
+      <th>วันที่</th>
+      <th>ชื่อยา</th>
+      <th>เลขที่ lot</th>
+      <th>วันหมดอายุ</th>
+      <th class="num">ส่วนต่าง</th>
+      <th class="num">เหลือหลังปรับ</th>
+      <th>สาเหตุ</th>
+      <th>เภสัชกรผู้อนุมัติ</th>
+      <th>ผู้นับ</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in movements %}
+    <tr>
+      <td>{{ m.created_at|thaidatetime }}</td>
+      <td>{{ m.lot.product.display_name }}</td>
+      <td>{{ m.lot.lot_no }}</td>
+      <td>{{ m.lot.expiry_date|thaidate }}</td>
+      <td class="num">{% if m.qty > 0 %}<span class="tag near">+{{ m.qty }}</span>{% else %}<span class="tag expired">{{ m.qty }}</span>{% endif %} {{ m.lot.product.base_unit }}</td>
+      <td class="num">{{ m.count_item.counted_qty|default_if_none:"-" }}</td>
+      <td>{{ m.note|default:"-" }}</td>
+      <td>{{ m.created_by.label_name|default:"-" }}</td>
+      <td>{{ m.count_item.count.created_by.label_name|default:"-" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="9" class="empty">ไม่มีการปรับยอดในช่วงนี้</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="note">
+  ส่วนต่างเป็นบวกคือนับได้มากกว่าในระบบ เป็นลบคือของหาย ชำรุด หรือทิ้งเพราะหมดอายุ ·
+  ทุกแถวมาจากใบนับสต็อกที่เภสัชกรอนุมัติด้วย PIN
+</p>
+{% endblock %}
