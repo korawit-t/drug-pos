@@ -7,9 +7,9 @@ from django.utils import timezone
 
 from accounts.models import User
 from core.models import ShopSettings
-from inventory.models import PriceLevel, Product, ProductUnit, Purchase, PurchaseItem, Supplier
+from inventory.models import Allergen, PriceLevel, Product, ProductUnit, Purchase, PurchaseItem, Supplier
 from inventory.services import post_purchase
-from sales.models import Customer
+from sales.models import Customer, CustomerAllergy
 
 C = Product.Category
 
@@ -215,12 +215,19 @@ class Command(BaseCommand):
         )
         post_purchase(delivery, admin)
 
-        Customer.objects.create(
-            name="ลูกค้าตัวอย่าง นักศึกษา", phone="080-000-0001", price_level_id=2,
-            allergies="Penicillin (ผื่นลมพิษ)",
+        # Allergies to try the alerts with: Amoxicillin for the student (same group),
+        # Ibuprofen for สมชาย (NSAIDs may cross-react with aspirin).
+        student = Customer.objects.create(name="ลูกค้าตัวอย่าง นักศึกษา", phone="080-000-0001", price_level_id=2)
+        CustomerAllergy.objects.create(
+            customer=student, allergen=Allergen.objects.get(name__startswith="Penicillins"),
+            substance="Penicillin", reaction="ผื่นลมพิษ", severity=CustomerAllergy.Severity.MILD, recorded_by=admin,
         )
-        Customer.objects.create(
+        somchai = Customer.objects.create(
             name="สมชาย ใจดี (ตัวอย่าง)", phone="080-000-0002", price_level_id=3,
             chronic_conditions="ความดันโลหิตสูง",
+        )
+        CustomerAllergy.objects.create(
+            customer=somchai, substance="Aspirin", reaction="หายใจลำบาก",
+            severity=CustomerAllergy.Severity.SEVERE, recorded_by=admin,
         )
         Customer.objects.create(name="คลินิกตัวอย่าง", phone="043-000-111", price_level_id=4)

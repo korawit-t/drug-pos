@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja import Field, Router, Schema
 
-from .models import Lot, Product, ProductUnit, Purchase, Supplier
+from .models import Allergen, Lot, Product, ProductUnit, Purchase, Supplier
 from .services import PurchaseData, PurchaseLine, delete_draft, last_costs, save_purchase
 
 router = Router(tags=["products"])
@@ -119,6 +119,16 @@ def products_by_id(request, ids: str):
     id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
     today = timezone.localdate()
     return [product_payload(p, today) for p in _products().filter(pk__in=id_list)]
+
+
+class AllergenOut(Schema):
+    id: int
+    name: str
+
+
+@router.get("/allergens", response=list[AllergenOut])
+def list_allergens(request):
+    return [{"id": a.pk, "name": a.name} for a in Allergen.objects.all()]
 
 
 # --- Receiving (รับยาเข้า) ---------------------------------------------------

@@ -61,6 +61,22 @@ export function CategoryBadge({ product }) {
   return <span className={`badge ${CATEGORY_STYLE[product.category] || 'neutral'}`}>{product.category_label}</span>;
 }
 
+export function AllergyList({ allergies }) {
+  return (
+    <ul className="allergy-list">
+      {allergies.map((a) => (
+        <li key={a.id}>
+          <strong>{a.label}</strong>
+          {a.allergen_name && a.substance && <span className="muted"> ({a.allergen_name})</span>}
+          {a.reaction && ` — ${a.reaction}`}
+          {a.severity === 'severe' && <span className="badge red small">รุนแรง</span>}
+          {!a.matched && <span className="badge neutral small">จับคู่กลุ่มยาไม่ได้ — เตือนเฉพาะชื่อตรง</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function PharmacistPicker({ pharmacists, value, onChange }) {
   if (!pharmacists.length) return <p className="form-error">ยังไม่มีผู้ใช้ที่เป็นเภสัชกร (เพิ่มได้ที่หลังร้าน)</p>;
   return (

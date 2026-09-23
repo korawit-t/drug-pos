@@ -7,7 +7,8 @@ from django.utils.html import format_html
 from core.models import ShopSettings
 from core.thai import thai_date
 
-from .models import Lot, PriceLevel, Product, ProductUnit, Purchase, PurchaseItem, StockMovement, Supplier
+from .allergy import AllergyIndex
+from .models import Allergen, Lot, PriceLevel, Product, ProductUnit, Purchase, PurchaseItem, StockMovement, Supplier
 from .services import StockError, post_purchase
 
 
@@ -32,6 +33,17 @@ class PriceLevelAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Allergen)
+class AllergenAdmin(admin.ModelAdmin):
+    list_display = ("name", "keywords", "related_groups")
+    search_fields = ("name", "keywords")
+    filter_horizontal = ("related",)
+
+    @admin.display(description="อาจแพ้ข้ามกลุ่มกับ")
+    def related_groups(self, obj):
+        return ", ".join(group.name for group in obj.related.all()) or "-"
 
 
 @admin.register(Supplier)
@@ -81,7 +93,18 @@ class ProductAdmin(admin.ModelAdmin):
         (None, {"fields": ("trade_name", "generic_name", "strength", "dosage_form", "base_unit", "is_active")}),
         ("ประเภทและบัญชี", {"fields": ("category", "in_ky11_list", "in_ky13_list", "registration_no", "tmt_code")}),
         ("ฉลากยาและการจัดเก็บ", {"fields": ("default_dosage", "label_warning", "storage_location")}),
+        ("แจ้งเตือนแพ้ยา", {"fields": ("matched_allergens", "allergens")}),
     )
+    filter_horizontal = ("allergens",)
+    readonly_fields = ("matched_allergens",)
+
+    @admin.display(description="กลุ่มยาที่ระบบจับคู่ได้ตอนนี้")
+    def matched_allergens(self, obj):
+        if obj.pk is None:
+            return "บันทึกก่อนแล้วระบบจะแสดงกลุ่มที่จับคู่ได้"
+        index = AllergyIndex()
+        groups = index.product_groups(obj)
+        return index.describe(groups) if groups else "ไม่เข้ากลุ่มใด — ถ้ายานี้อยู่ในกลุ่มที่แพ้บ่อย ให้เลือกเพิ่มด้านล่าง"
 
     def get_queryset(self, request):
         # A subquery, not a join: searching by barcode joins units, which would multiply a joined sum.

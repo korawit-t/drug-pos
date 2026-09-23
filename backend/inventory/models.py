@@ -37,6 +37,33 @@ class Supplier(models.Model):
         return self.name
 
 
+class Allergen(models.Model):
+    """
+    กลุ่มยาหรือสารสำหรับแจ้งเตือนแพ้ยา เช่น Penicillins, NSAIDs
+    ยาอยู่ในกลุ่มถ้าชื่อสามัญหรือชื่อการค้ามีคำใน keywords หรือเลือกกลุ่มไว้ที่ตัวยา
+    """
+
+    name = models.CharField("ชื่อกลุ่มยา/สาร", max_length=100, unique=True)
+    keywords = models.TextField(
+        "คำที่ใช้จับคู่",
+        help_text="ชื่อยาในกลุ่มนี้ คั่นด้วยจุลภาค ไม่สนตัวพิมพ์เล็ก-ใหญ่ เช่น amoxicillin, ampicillin",
+    )
+    related = models.ManyToManyField("self", blank=True, verbose_name="อาจแพ้ข้ามกลุ่มกับ")
+    note = models.CharField("หมายเหตุ", max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = "กลุ่มยาสำหรับแจ้งเตือนแพ้ยา"
+        verbose_name_plural = "กลุ่มยาสำหรับแจ้งเตือนแพ้ยา"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def terms(self) -> list[str]:
+        return [term.strip().lower() for term in self.keywords.replace("\n", ",").split(",") if term.strip()]
+
+
 class Product(models.Model):
     class Category(models.TextChoices):
         GENERAL = "general", "สินค้าทั่วไป"
@@ -60,6 +87,13 @@ class Product(models.Model):
     default_dosage = models.CharField("วิธีใช้ (ค่าเริ่มต้นบนฉลาก)", max_length=300, blank=True)
     label_warning = models.CharField("คำเตือนบนฉลาก", max_length=300, blank=True)
     storage_location = models.CharField("ที่เก็บ", max_length=100, blank=True)
+    allergens = models.ManyToManyField(
+        Allergen,
+        blank=True,
+        related_name="products",
+        verbose_name="กลุ่มยาสำหรับแจ้งเตือนแพ้ยา (เพิ่มเติม)",
+        help_text="ปกติระบบจับคู่จากชื่อสามัญให้เอง เลือกเพิ่มเมื่อชื่อยาไม่บอกกลุ่ม",
+    )
     is_active = models.BooleanField("ใช้งาน", default=True)
 
     class Meta:

@@ -13,6 +13,7 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from accounts.models import User
+from inventory.allergy import AllergyIndex, allergy_alerts
 from inventory.models import PriceLevel, ProductUnit, StockMovement
 from inventory.services import StockError, allocate_fefo, record_movement
 
@@ -33,29 +34,34 @@ class SaleError(Exception):
 #
 # After a pharmacist enters their PIN, each confirmed line gets a signed token
 # that pins down exactly what was approved: this bill, this unit, this qty,
-# this label text. Checkout accepts a line only with a matching, unexpired
-# token — so changing anything after confirmation means confirming again.
+# this label text — and, when the customer has a matching drug allergy, which
+# customer and the pharmacist's reason for dispensing anyway. Checkout accepts
+# a line only with a matching, unexpired token, so changing anything after
+# confirmation means confirming again.
 
 
-def _dosage_digest(text: str) -> str:
+def _digest(text: str) -> str:
     return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
 
 
-def sign_dispense(pharmacist: User, client_uuid, unit_id: int, qty: int, dosage_text: str) -> str:
-    return signing.dumps(
-        {
-            "ph": pharmacist.pk,
-            "b": str(client_uuid),
-            "u": unit_id,
-            "q": qty,
-            "d": _dosage_digest(dosage_text),
-            "t": int(time.time()),
-        },
-        salt=DISPENSE_SALT,
-    )
+def sign_dispense(
+    pharmacist: User, client_uuid, unit_id: int, qty: int, dosage_text: str, allergy: tuple[int, str] | None = None
+) -> str:
+    """allergy: (customer_id, reason) when the pharmacist dispensed despite an allergy alert."""
+    data = {
+        "ph": pharmacist.pk,
+        "b": str(client_uuid),
+        "u": unit_id,
+        "q": qty,
+        "d": _digest(dosage_text),
+        "t": int(time.time()),
+    }
+    if allergy is not None:
+        data["c"], data["n"] = allergy[0], _digest(allergy[1])
+    return signing.dumps(data, salt=DISPENSE_SALT)
 
 
-def check_dispense(token, client_uuid, unit_id: int, qty: int, dosage_text: str):
+def check_dispense(token, client_uuid, unit_id: int, qty: int, dosage_text: str, allergy: tuple[int, str] | None = None):
     """Returns (pharmacist, confirmed_at) if the token approves exactly this line, else None."""
     if not token:
         return None
@@ -63,7 +69,12 @@ def check_dispense(token, client_uuid, unit_id: int, qty: int, dosage_text: str)
         data = signing.loads(token, salt=DISPENSE_SALT, max_age=settings.DISPENSE_APPROVAL_MAX_AGE)
     except signing.BadSignature:
         return None
-    expected = {"b": str(client_uuid), "u": unit_id, "q": qty, "d": _dosage_digest(dosage_text)}
+    expected = {"b": str(client_uuid), "u": unit_id, "q": qty, "d": _digest(dosage_text)}
+    if allergy is not None:
+        customer_id, reason = allergy
+        if not reason.strip():
+            return None
+        expected.update(c=customer_id, n=_digest(reason))
     if any(data.get(key) != value for key, value in expected.items()):
         return None
     pharmacist = User.objects.filter(pk=data.get("ph"), is_active=True, role=User.Role.PHARMACIST).first()
@@ -81,6 +92,7 @@ class CartLine:
     qty: int
     dosage_text: str = ""
     approval: str | None = None
+    allergy_note: str = ""  # pharmacist's reason for dispensing despite an allergy alert
 
 
 @dataclass
@@ -141,7 +153,12 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
         if customer is None:
             raise SaleError("ไม่พบข้อมูลลูกค้า")
 
-    units = ProductUnit.objects.select_related("product").in_bulk([line.unit_id for line in req.lines])
+    units = (
+        ProductUnit.objects.select_related("product")
+        .prefetch_related("product__allergens")
+        .in_bulk([line.unit_id for line in req.lines])
+    )
+    alerts = customer_allergy_alerts(customer, {unit.product for unit in units.values()})
     prepared = []
     needs_prescription = needs_buyer_name = False
     for line in req.lines:
@@ -152,15 +169,24 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
             raise SaleError(f"{unit.product.display_name}: จำนวนต้องมากกว่า 0")
         product = unit.product
         dosage = line.dosage_text.strip()
+        product_alerts = alerts.get(product.pk, [])
         pharmacist = confirmed_at = None
-        if product.needs_pharmacist:
-            approved = check_dispense(line.approval, req.client_uuid, unit.pk, line.qty, dosage)
+        # An allergy alert needs the pharmacist even for a household remedy.
+        if product.needs_pharmacist or product_alerts:
+            allergy = (customer.pk, line.allergy_note) if product_alerts else None
+            approved = check_dispense(line.approval, req.client_uuid, unit.pk, line.qty, dosage, allergy)
             if approved is None:
+                if product_alerts:
+                    raise SaleError(
+                        f"{product.display_name}: ลูกค้ามีประวัติแพ้ยา ต้องให้เภสัชกรยืนยันพร้อมเหตุผล", status=409
+                    )
                 raise SaleError(f"{product.display_name} ยังไม่ได้รับการยืนยันจากเภสัชกร", status=409)
             pharmacist, confirmed_at = approved
         needs_prescription |= product.needs_prescription
         needs_buyer_name |= product.needs_buyer_name
-        prepared.append((line, unit, product, dosage, pharmacist, confirmed_at, unit.price_for(level.level)))
+        prepared.append(
+            (line, unit, product, dosage, pharmacist, confirmed_at, unit.price_for(level.level), product_alerts)
+        )
 
     buyer_name = req.buyer_name.strip() or (customer.name if customer else "")
     if needs_buyer_name and not buyer_name:
@@ -171,7 +197,7 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
         # Usually a พ.ศ. year typed into a ค.ศ. date field.
         raise SaleError("วันที่ในใบสั่งยาอยู่ในอนาคต — ถ้ากรอกปีเป็น พ.ศ. ให้เปลี่ยนเป็น ค.ศ.")
 
-    total = sum((price * line.qty for line, *_, price in prepared), Decimal("0")).quantize(CENTS)
+    total = sum((price * line.qty for line, *_, price, _alerts in prepared), Decimal("0")).quantize(CENTS)
     cash_received = change = None
     if req.payment_method == Sale.Payment.CASH:
         if req.cash_received is None or req.cash_received < total:
@@ -196,7 +222,7 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
         rx_facility=req.rx_facility.strip(),
         rx_date=req.rx_date,
     )
-    for line, unit, product, dosage, pharmacist, confirmed_at, price in prepared:
+    for line, unit, product, dosage, pharmacist, confirmed_at, price, product_alerts in prepared:
         base_qty = line.qty * unit.factor
         item = SaleItem.objects.create(
             sale=sale,
@@ -214,6 +240,8 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
             dosage_text=dosage,
             confirmed_by=pharmacist,
             confirmed_at=confirmed_at,
+            allergy_alert="; ".join(alert.message for alert in product_alerts),
+            allergy_note=line.allergy_note.strip()[:300] if product_alerts else "",
         )
         for allocation in allocate_fefo(product, base_qty):
             movement = record_movement(
@@ -221,6 +249,16 @@ def _checkout_locked(req: CheckoutRequest, cashier: User) -> Sale:
             )
             SaleItemLot.objects.create(sale_item=item, lot=allocation.lot, qty=allocation.qty, movement=movement)
     return sale
+
+
+# --- Allergies ---------------------------------------------------------------
+
+
+def customer_allergy_alerts(customer: Customer | None, products, index: AllergyIndex | None = None):
+    """Allergy alerts per product id for this customer; none for a walk-in customer."""
+    if customer is None:
+        return {}
+    return allergy_alerts(customer.allergy_records.select_related("allergen"), products, index)
 
 
 # --- Void --------------------------------------------------------------------

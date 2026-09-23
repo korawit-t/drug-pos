@@ -1,18 +1,45 @@
 from django.contrib import admin
 
-from .models import Customer, Sale, SaleItem
+from .models import Customer, CustomerAllergy, Sale, SaleItem
+
+
+class CustomerAllergyInline(admin.TabularInline):
+    model = CustomerAllergy
+    extra = 1
+    fields = ("allergen", "substance", "reaction", "severity")
+    autocomplete_fields = ("allergen",)
 
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ("name", "phone", "price_level", "allergies")
+    list_display = ("name", "phone", "price_level", "allergy_summary")
     list_filter = ("price_level",)
     search_fields = ("name", "phone")
+    inlines = [CustomerAllergyInline]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("allergy_records__allergen")
+
+    @admin.display(description="แพ้ยา")
+    def allergy_summary(self, obj):
+        return ", ".join(record.label for record in obj.allergy_records.all()) or "-"
+
+    def save_formset(self, request, form, formset, change):
+        for record in formset.save(commit=False):
+            if record.pk is None:
+                record.recorded_by = request.user
+            record.save()
+        for record in formset.deleted_objects:
+            record.delete()
+        formset.save_m2m()
 
 
 class SaleItemInline(admin.TabularInline):
     model = SaleItem
-    fields = ("description", "qty", "unit_name", "unit_price", "line_total", "dosage_text", "confirmed_by")
+    fields = (
+        "description", "qty", "unit_name", "unit_price", "line_total", "dosage_text", "confirmed_by",
+        "allergy_alert", "allergy_note",
+    )
     readonly_fields = fields
     extra = 0
     can_delete = False

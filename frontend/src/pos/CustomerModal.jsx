@@ -52,7 +52,9 @@ export default function CustomerModal({ meta, onSelect, onClose }) {
             <li key={c.id} className={i === active ? 'active' : ''} onMouseEnter={() => setActive(i)} onClick={() => onSelect(c)}>
               <div>
                 <strong>{c.name}</strong> <span className="muted small">{c.phone}</span>
-                {c.allergies && <div className="text-danger small">แพ้ยา: {c.allergies}</div>}
+                {c.allergies.length > 0 && (
+                  <div className="text-danger small">แพ้ยา: {c.allergies.map((a) => a.label).join(', ')}</div>
+                )}
               </div>
               <span className="badge neutral">
                 ราคา {c.price_level} · {levelName(c.price_level)}

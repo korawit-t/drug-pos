@@ -243,6 +243,67 @@ kbd {
   color: var(--amber-text);
 }
 
+.alert.info {
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.alert-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.allergy-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.allergy-list li {
+  margin: 2px 0;
+}
+
+.allergy-banner {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--red-bg);
+  color: var(--red-text);
+  border: 1px solid #f0b3b3;
+}
+
+.line-alert {
+  font-size: 13px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.line-alert.direct {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
+
+.line-alert.cross {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+}
+
+.approve-line.has-alert {
+  border: 1px solid #f0b3b3;
+}
+
+.allergy-decision {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.allergy-decision .field {
+  flex: 1;
+}
+
 .form-error {
   color: var(--red);
   font-size: 14px;
@@ -403,6 +464,18 @@ kbd {
   gap: 12px;
   padding: 12px 16px;
   min-height: 0;
+}
+
+.cart-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.cart-column .cart-area {
+  flex: 1;
 }
 
 .cart-area {

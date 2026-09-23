@@ -1,7 +1,7 @@
 import { baht, thaiDate } from '../format.js';
-import { CategoryBadge } from './ui.jsx';
+import { AllergyList, CategoryBadge } from './ui.jsx';
 
-function CustomerCard({ bill, meta, dispatch, onPickCustomer }) {
+function CustomerCard({ bill, meta, dispatch, onPickCustomer, onAddAllergy }) {
   const c = bill.customer;
   return (
     <section className="panel">
@@ -13,9 +13,15 @@ function CustomerCard({ bill, meta, dispatch, onPickCustomer }) {
       </div>
       <div className="customer-name">{c ? c.name : 'ลูกค้าทั่วไป'}</div>
       {c && c.phone && <div className="muted small">{c.phone}</div>}
-      {c && c.allergies && (
-        <div className="alert danger">
-          <strong>แพ้ยา:</strong> {c.allergies}
+      {c && (
+        <div className={`alert ${c.allergies.length ? 'danger' : 'info'}`}>
+          <div className="alert-head">
+            <strong>{c.allergies.length ? 'แพ้ยา' : 'ไม่มีประวัติแพ้ยาในระบบ'}</strong>
+            <button type="button" className="btn small" onClick={onAddAllergy}>
+              + บันทึกแพ้ยา
+            </button>
+          </div>
+          {c.allergies.length > 0 && <AllergyList allergies={c.allergies} />}
         </div>
       )}
       {c && c.chronic_conditions && (
@@ -91,13 +97,29 @@ function SelectedLine({ line, dispatch }) {
   );
 }
 
-export default function SidePanel({ bill, meta, totalSatang, dispatch, onPickCustomer, onPay, printPrefs, setPrintPrefs }) {
+export default function SidePanel({
+  bill,
+  meta,
+  totalSatang,
+  dispatch,
+  onPickCustomer,
+  onAddAllergy,
+  onPay,
+  printPrefs,
+  setPrintPrefs,
+}) {
   const selected = bill.lines.find((l) => l.key === bill.selectedKey);
   const count = bill.lines.length;
   return (
     <aside className="side">
       <div className="side-scroll">
-        <CustomerCard bill={bill} meta={meta} dispatch={dispatch} onPickCustomer={onPickCustomer} />
+        <CustomerCard
+          bill={bill}
+          meta={meta}
+          dispatch={dispatch}
+          onPickCustomer={onPickCustomer}
+          onAddAllergy={onAddAllergy}
+        />
         <SelectedLine line={selected} dispatch={dispatch} />
       </div>
       <section className="panel total-panel">

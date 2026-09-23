@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from inventory.models import Lot, PriceLevel, Product, ProductUnit, StockMovement
@@ -15,7 +16,6 @@ class Customer(models.Model):
     price_level = models.ForeignKey(
         PriceLevel, verbose_name="ระดับราคา", default=default_price_level, on_delete=models.PROTECT, related_name="+"
     )
-    allergies = models.TextField("ประวัติแพ้ยา", blank=True)
     chronic_conditions = models.TextField("โรคประจำตัว", blank=True)
     note = models.TextField("หมายเหตุ", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -27,6 +27,46 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CustomerAllergy(models.Model):
+    """ประวัติแพ้ยาหนึ่งรายการ — ระบบใช้จับคู่กับยาในบิลเพื่อแจ้งเตือน"""
+
+    class Severity(models.TextChoices):
+        UNKNOWN = "unknown", "ไม่ทราบความรุนแรง"
+        MILD = "mild", "ไม่รุนแรง"
+        SEVERE = "severe", "รุนแรง (เช่น SJS หายใจลำบาก ช็อก)"
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="allergy_records")
+    allergen = models.ForeignKey(
+        "inventory.Allergen", verbose_name="กลุ่มยา", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    substance = models.CharField(
+        "ยาหรือสารที่แพ้", max_length=200, blank=True, help_text="เช่น Amoxicillin — เลือกกลุ่มยาแล้วเว้นว่างได้"
+    )
+    reaction = models.CharField("อาการ", max_length=200, blank=True)
+    severity = models.CharField("ความรุนแรง", max_length=10, choices=Severity.choices, default=Severity.UNKNOWN)
+    recorded_at = models.DateTimeField("บันทึกเมื่อ", auto_now_add=True)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="ผู้บันทึก", null=True, blank=True, editable=False,
+        on_delete=models.SET_NULL, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "ประวัติแพ้ยา"
+        verbose_name_plural = "ประวัติแพ้ยา"
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.label
+
+    @property
+    def label(self) -> str:
+        return self.substance or (self.allergen.name if self.allergen else "")
+
+    def clean(self):
+        if not self.allergen_id and not self.substance.strip():
+            raise ValidationError("ระบุยาหรือสารที่แพ้ หรือเลือกกลุ่มยา")
 
 
 class Sale(models.Model):
@@ -101,6 +141,8 @@ class SaleItem(models.Model):
         on_delete=models.PROTECT, related_name="+",
     )
     confirmed_at = models.DateTimeField("ยืนยันเมื่อ", null=True, blank=True)
+    allergy_alert = models.TextField("แจ้งเตือนแพ้ยา ณ ตอนขาย", blank=True)
+    allergy_note = models.CharField("เหตุผลที่เภสัชกรยังจ่าย", max_length=300, blank=True)
 
     class Meta:
         verbose_name = "รายการขาย"

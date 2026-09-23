@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { bahtOf } from '../format.js';
 import { Brand, TopLinks, ViewTabs } from '../nav.jsx';
 import { labelsUrl, printPage, receiptUrl } from '../print.js';
+import AllergyModal from './AllergyModal.jsx';
 import { billFromHeld, billNeeds, billReducer, billTotalSatang, heldPayload, newBill, planStock } from './bill.js';
 import CartTable from './CartTable.jsx';
 import CustomerModal from './CustomerModal.jsx';
@@ -39,6 +40,33 @@ export default function Pos({ meta, nav, active }) {
   const plan = useMemo(() => planStock(bill.lines), [bill.lines]);
   const totalSatang = billTotalSatang(bill);
 
+  // Allergy alerts for the bill's customer, re-checked whenever the customer,
+  // the products in the bill, or the customer's allergy records change.
+  const [alerts, setAlerts] = useState({});
+  const [allergyVersion, setAllergyVersion] = useState(0);
+  const customerId = bill.customer?.id ?? null;
+  const productIds = useMemo(
+    () => [...new Set(bill.lines.map((l) => l.product.id))].sort((a, b) => a - b).join(','),
+    [bill.lines],
+  );
+  useEffect(() => {
+    if (!customerId || !productIds) {
+      setAlerts({});
+      return undefined;
+    }
+    let current = true;
+    api(`/customers/${customerId}/allergy-check`, { params: { product_ids: productIds } })
+      .then((result) => current && setAlerts(result.alerts))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [customerId, productIds, allergyVersion]);
+  useEffect(() => {
+    dispatch({ type: 'syncAllergyApprovals', productIds: Object.keys(alerts).map(Number), customerId });
+  }, [alerts, customerId]);
+  const alertCount = bill.lines.filter((l) => alerts[l.product.id]?.length).length;
+
   const refreshSummary = useCallback(() => {
     api('/sales/summary').then(setSummary).catch(() => {});
   }, []);
@@ -71,11 +99,11 @@ export default function Pos({ meta, nav, active }) {
       notify(`${short.product.display_name}: สต็อกไม่พอ`, 'error');
       return;
     }
-    setModal(billNeeds(bill).pending.length ? 'pharmacist-then-pay' : 'payment');
+    setModal(billNeeds(bill, alerts).pending.length ? 'pharmacist-then-pay' : 'payment');
   }
 
   function openPharmacist() {
-    if (!billNeeds(bill).pending.length) {
+    if (!billNeeds(bill, alerts).pending.length) {
       notify('ไม่มีรายการที่รอเภสัชกรยืนยัน');
       return;
     }
@@ -106,7 +134,9 @@ export default function Pos({ meta, nav, active }) {
     try {
       const ids = [...new Set(held.payload.lines.map((l) => l.productId))].join(',');
       const products = ids ? await api('/products', { params: { ids } }) : [];
-      dispatch({ type: 'load', bill: billFromHeld(held.payload, products) });
+      // The customer as they are now — allergies may have been recorded since the bill was held.
+      const customer = held.payload.customer ? await api(`/customers/${held.payload.customer.id}`) : null;
+      dispatch({ type: 'load', bill: billFromHeld({ ...held.payload, customer }, products) });
       await api(`/held-bills/${held.id}`, { method: 'DELETE' });
       setModal(null);
       notify(`เรียกบิลกลับมาแล้ว: ${held.label}`);
@@ -233,8 +263,15 @@ export default function Pos({ meta, nav, active }) {
       )}
 
       <main className="workspace">
-        <section className="cart-area">
-          <CartTable bill={bill} plan={plan} meta={meta} dispatch={dispatch} />
+        <section className="cart-column">
+          {alertCount > 0 && (
+            <div className="allergy-banner" role="alert">
+              <strong>ลูกค้ามีประวัติแพ้ยา</strong> ตรงกับ {alertCount} รายการในบิล — ต้องให้เภสัชกรตรวจและยืนยันก่อนจ่าย
+            </div>
+          )}
+          <div className="cart-area">
+            <CartTable bill={bill} plan={plan} meta={meta} alerts={alerts} dispatch={dispatch} />
+          </div>
         </section>
         <SidePanel
           bill={bill}
@@ -242,6 +279,7 @@ export default function Pos({ meta, nav, active }) {
           totalSatang={totalSatang}
           dispatch={dispatch}
           onPickCustomer={() => setModal('customer')}
+          onAddAllergy={() => setModal('allergy')}
           onPay={startPayment}
           printPrefs={printPrefs}
           setPrintPrefs={setPrintPrefs}
@@ -281,6 +319,7 @@ export default function Pos({ meta, nav, active }) {
           bill={bill}
           plan={plan}
           meta={meta}
+          alerts={alerts}
           dispatch={dispatch}
           onClose={(action) => (action === 'hold' ? holdBill() : setModal(null))}
           onApproved={() => {
@@ -303,6 +342,18 @@ export default function Pos({ meta, nav, active }) {
             dispatch({ type: 'clearApprovals' });
             setModal(null);
             notify(`${message} — ให้เภสัชกรยืนยันใหม่ (F8)`, 'error');
+          }}
+        />
+      )}
+      {modal === 'allergy' && bill.customer && (
+        <AllergyModal
+          customer={bill.customer}
+          onClose={() => setModal(null)}
+          onSaved={(customer) => {
+            dispatch({ type: 'updateCustomer', customer });
+            setAllergyVersion((v) => v + 1);
+            setModal(null);
+            notify('บันทึกประวัติแพ้ยาแล้ว');
           }}
         />
       )}

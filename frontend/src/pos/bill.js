@@ -27,9 +27,9 @@ function defaultUnitId(product, matchedUnitId) {
   return (product.units.find((u) => u.is_default) || product.units[0]).id;
 }
 
-// Anything the pharmacist signed off on — unit, quantity, label text.
-// Changing one of these means the pharmacist has to confirm again.
-const APPROVED_FIELDS = ['unitId', 'qty', 'dosage'];
+// Anything the pharmacist signed off on — unit, quantity, label text, and the
+// reason for dispensing despite an allergy. Changing one means confirming again.
+const APPROVED_FIELDS = ['unitId', 'qty', 'dosage', 'allergyNote'];
 
 export function billReducer(state, action) {
   switch (action.type) {
@@ -51,6 +51,7 @@ export function billReducer(state, action) {
         unitId,
         qty: 1,
         dosage: action.product.default_dosage || '',
+        allergyNote: '',
         approval: null,
       };
       return { ...state, lines: [...state.lines, line], selectedKey: line.key };
@@ -80,17 +81,45 @@ export function billReducer(state, action) {
     }
     case 'setCustomer':
       return { ...state, customer: action.customer, priceLevel: action.customer ? action.customer.price_level : 1 };
+    case 'updateCustomer':
+      // Same customer, fresh details (e.g. an allergy was just recorded) — keep the bill's price level.
+      return state.customer && state.customer.id === action.customer.id ? { ...state, customer: action.customer } : state;
     case 'setPriceLevel':
       return { ...state, priceLevel: action.level };
     case 'setFields':
       return { ...state, ...action.fields };
-    case 'approve':
+    case 'approve': {
+      const allergyKeys = new Set(action.allergyKeys || []);
+      return {
+        ...state,
+        lines: state.lines.map((l) => {
+          if (!action.tokens[l.key]) return l;
+          const allergyAck = allergyKeys.has(l.key);
+          return {
+            ...l,
+            allergyNote: allergyAck ? action.notes?.[l.key] ?? '' : l.allergyNote,
+            approval: {
+              token: action.tokens[l.key],
+              by: action.pharmacistName,
+              allergyAck,
+              customerId: action.customerId ?? null,
+            },
+          };
+        }),
+      };
+    }
+    case 'syncAllergyApprovals': {
+      // A confirmation only covers an allergy the pharmacist actually saw, for this customer.
+      const alerted = new Set(action.productIds);
       return {
         ...state,
         lines: state.lines.map((l) =>
-          action.tokens[l.key] ? { ...l, approval: { token: action.tokens[l.key], by: action.pharmacistName } } : l,
+          l.approval && alerted.has(l.product.id) && !(l.approval.allergyAck && l.approval.customerId === action.customerId)
+            ? { ...l, approval: null }
+            : l,
         ),
       };
+    }
     case 'clearApprovals':
       return { ...state, lines: state.lines.map((l) => ({ ...l, approval: null })) };
     case 'reset':
@@ -126,9 +155,14 @@ export function planStock(lines) {
   return plan;
 }
 
-export function billNeeds(bill) {
+// alerts: allergy alerts per product id for the bill's customer.
+export const lineAlerts = (line, alerts) => alerts?.[line.product.id] || [];
+
+export const needsPharmacist = (line, alerts) => line.product.needs_pharmacist || lineAlerts(line, alerts).length > 0;
+
+export function billNeeds(bill, alerts = {}) {
   return {
-    pending: bill.lines.filter((l) => l.product.needs_pharmacist && !l.approval),
+    pending: bill.lines.filter((l) => needsPharmacist(l, alerts) && !l.approval),
     needsBuyer: bill.lines.some((l) => l.product.needs_buyer_name),
     needsRx: bill.isPrescription || bill.lines.some((l) => l.product.needs_prescription),
   };
@@ -152,6 +186,7 @@ export function checkoutPayload(bill, { method, cashReceived }) {
       qty: l.qty,
       dosage_text: l.dosage.trim(),
       approval: l.approval ? l.approval.token : null,
+      allergy_note: l.allergyNote || '',
     })),
   };
 }
@@ -172,7 +207,15 @@ export function billFromHeld(payload, products) {
   const byId = new Map(products.map((p) => [p.id, p]));
   const lines = payload.lines
     .filter((l) => byId.has(l.productId))
-    .map((l) => ({ key: uuid4(), product: byId.get(l.productId), unitId: l.unitId, qty: l.qty, dosage: l.dosage, approval: null }));
+    .map((l) => ({
+      key: uuid4(),
+      product: byId.get(l.productId),
+      unitId: l.unitId,
+      qty: l.qty,
+      dosage: l.dosage,
+      allergyNote: '',
+      approval: null,
+    }));
   return {
     ...newBill(),
     lines,

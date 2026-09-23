@@ -10,10 +10,19 @@ from ninja.errors import HttpError
 
 from accounts.models import PinAttempt
 from accounts.services import client_ip, verify_pin
-from inventory.models import ProductUnit
+from inventory.allergy import AllergyIndex
+from inventory.models import Allergen, Product, ProductUnit
 
-from .models import Customer, HeldBill, Sale
-from .services import CartLine, CheckoutRequest, checkout, daily_summary, sign_dispense, void_sale
+from .models import Customer, CustomerAllergy, HeldBill, Sale
+from .services import (
+    CartLine,
+    CheckoutRequest,
+    checkout,
+    customer_allergy_alerts,
+    daily_summary,
+    sign_dispense,
+    void_sale,
+)
 
 router = Router(tags=["sales"])
 
@@ -21,32 +30,121 @@ router = Router(tags=["sales"])
 # --- Customers ---------------------------------------------------------------
 
 
+class AllergyOut(Schema):
+    id: int
+    label: str
+    allergen_id: int | None
+    allergen_name: str
+    substance: str
+    reaction: str
+    severity: str
+    severity_label: str
+    matched: bool  # resolves to a drug group, so products of that group will alert
+
+
 class CustomerOut(Schema):
     id: int
     name: str
     phone: str
     price_level: int
-    allergies: str
+    allergies: list[AllergyOut]
     chronic_conditions: str
 
 
-def _customer(c: Customer) -> dict:
+def _customer(c: Customer, index: AllergyIndex) -> dict:
     return {
         "id": c.pk,
         "name": c.name,
         "phone": c.phone,
         "price_level": c.price_level_id,
-        "allergies": c.allergies,
+        "allergies": [
+            {
+                "id": a.pk,
+                "label": a.label,
+                "allergen_id": a.allergen_id,
+                "allergen_name": a.allergen.name if a.allergen else "",
+                "substance": a.substance,
+                "reaction": a.reaction,
+                "severity": a.severity,
+                "severity_label": a.get_severity_display(),
+                "matched": bool(index.record_groups(a)),
+            }
+            for a in c.allergy_records.all()
+        ],
         "chronic_conditions": c.chronic_conditions,
     }
 
 
+def _customers():
+    return Customer.objects.prefetch_related("allergy_records__allergen")
+
+
 @router.get("/customers", response=list[CustomerOut])
 def search_customers(request, q: str = ""):
-    customers = Customer.objects.all()
+    customers = _customers()
     if q := q.strip():
         customers = customers.filter(Q(name__icontains=q) | Q(phone__icontains=q))
-    return [_customer(c) for c in customers[:30]]
+    index = AllergyIndex()
+    return [_customer(c, index) for c in customers[:30]]
+
+
+@router.get("/customers/{customer_id}", response=CustomerOut)
+def get_customer(request, customer_id: int):
+    return _customer(get_object_or_404(_customers(), pk=customer_id), AllergyIndex())
+
+
+class AllergyIn(Schema):
+    allergen_id: int | None = None
+    substance: str = ""
+    reaction: str = ""
+    severity: str = CustomerAllergy.Severity.UNKNOWN
+
+
+@router.post("/customers/{customer_id}/allergies", response=CustomerOut)
+def add_allergy(request, customer_id: int, data: AllergyIn):
+    customer = get_object_or_404(Customer, pk=customer_id)
+    allergen = None
+    if data.allergen_id:
+        allergen = Allergen.objects.filter(pk=data.allergen_id).first()
+        if allergen is None:
+            raise HttpError(400, "ไม่พบกลุ่มยา")
+    if allergen is None and not data.substance.strip():
+        raise HttpError(400, "ระบุยาหรือสารที่แพ้ หรือเลือกกลุ่มยา")
+    if data.severity not in CustomerAllergy.Severity.values:
+        raise HttpError(400, "ความรุนแรงไม่ถูกต้อง")
+    CustomerAllergy.objects.create(
+        customer=customer,
+        allergen=allergen,
+        substance=data.substance.strip()[:200],
+        reaction=data.reaction.strip()[:200],
+        severity=data.severity,
+        recorded_by=request.user,
+    )
+    return _customer(_customers().get(pk=customer.pk), AllergyIndex())
+
+
+class AllergyAlertOut(Schema):
+    level: str
+    allergy_id: int
+    allergy: str
+    reaction: str
+    severity: str
+    severity_label: str
+    message: str
+
+
+class AllergyCheckOut(Schema):
+    alerts: dict[int, list[AllergyAlertOut]]
+
+
+@router.get("/customers/{customer_id}/allergy-check", response=AllergyCheckOut)
+def allergy_check(request, customer_id: int, product_ids: str = ""):
+    """Which products in the bill clash with this customer's recorded allergies."""
+    customer = get_object_or_404(Customer, pk=customer_id)
+    ids = [int(x) for x in product_ids.split(",") if x.strip().isdigit()]
+    products = Product.objects.filter(pk__in=ids).prefetch_related("allergens")
+    alerts = customer_allergy_alerts(customer, products)
+    return {"alerts": {pid: [vars(alert) for alert in found] for pid, found in alerts.items()}}
 
 
 # --- Pharmacist confirmation -------------------------------------------------
@@ -57,25 +155,45 @@ class ApprovalLineIn(Schema):
     unit_id: int
     qty: int = Field(gt=0)
     dosage_text: str = ""
+    allergy_note: str = ""
 
 
 class ApprovalIn(Schema):
     pharmacist_id: int
     pin: str
     client_uuid: UUID
+    customer_id: int | None = None
     lines: list[ApprovalLineIn]
 
 
 @router.post("/approvals/dispense")
 def approve_dispense(request, data: ApprovalIn):
-    units = ProductUnit.objects.select_related("product").in_bulk([line.unit_id for line in data.lines])
+    units = (
+        ProductUnit.objects.select_related("product")
+        .prefetch_related("product__allergens")
+        .in_bulk([line.unit_id for line in data.lines])
+    )
+    customer = Customer.objects.filter(pk=data.customer_id).first() if data.customer_id else None
+    alerts = customer_allergy_alerts(customer, {unit.product for unit in units.values()})
+
+    def has_alert(line):
+        return units[line.unit_id].product_id in alerts
+
     lines = [
         line for line in data.lines
-        if line.unit_id in units and units[line.unit_id].product.needs_pharmacist
+        if line.unit_id in units and (units[line.unit_id].product.needs_pharmacist or has_alert(line))
     ]
     if not lines:
         raise HttpError(400, "ไม่มีรายการที่ต้องให้เภสัชกรยืนยัน")
-    detail = ", ".join(f"{units[line.unit_id].product.display_name} x{line.qty}" for line in lines)
+    # Checked before the PIN, so a missing reason doesn't count as a wrong PIN.
+    for line in lines:
+        if has_alert(line) and not line.allergy_note.strip():
+            name = units[line.unit_id].product.display_name
+            raise HttpError(400, f"ระบุเหตุผลที่ยังจ่าย {name} ทั้งที่ลูกค้ามีประวัติแพ้ยา")
+    detail = ", ".join(
+        f"{units[line.unit_id].product.display_name} x{line.qty}" + (" (แจ้งเตือนแพ้ยา)" if has_alert(line) else "")
+        for line in lines
+    )
     pharmacist = verify_pin(
         pharmacist_id=data.pharmacist_id,
         pin=data.pin,
@@ -88,9 +206,13 @@ def approve_dispense(request, data: ApprovalIn):
         "pharmacist_id": pharmacist.pk,
         "pharmacist_name": pharmacist.label_name,
         "tokens": {
-            line.key: sign_dispense(pharmacist, data.client_uuid, line.unit_id, line.qty, line.dosage_text)
+            line.key: sign_dispense(
+                pharmacist, data.client_uuid, line.unit_id, line.qty, line.dosage_text,
+                allergy=(customer.pk, line.allergy_note) if has_alert(line) else None,
+            )
             for line in lines
         },
+        "allergy_keys": [line.key for line in lines if has_alert(line)],
     }
 
 
@@ -102,6 +224,7 @@ class CheckoutLineIn(Schema):
     qty: int = Field(gt=0)
     dosage_text: str = ""
     approval: str | None = None
+    allergy_note: str = ""
 
 
 class CheckoutIn(Schema):
@@ -136,6 +259,8 @@ class SaleItemOut(Schema):
     category: str
     dosage_text: str
     confirmed_by: str | None
+    allergy_alert: str
+    allergy_note: str
     allocations: list[AllocationOut]
 
 
@@ -182,6 +307,8 @@ def sale_payload(sale: Sale) -> dict:
                 "category": item.category,
                 "dosage_text": item.dosage_text,
                 "confirmed_by": item.confirmed_by.label_name if item.confirmed_by else None,
+                "allergy_alert": item.allergy_alert,
+                "allergy_note": item.allergy_note,
                 "allocations": [
                     {"lot_no": a.lot.lot_no, "expiry_date": a.lot.expiry_date, "qty": a.qty}
                     for a in item.allocations.all()
@@ -197,7 +324,7 @@ def create_sale(request, data: CheckoutIn):
     req = CheckoutRequest(
         client_uuid=data.client_uuid,
         payment_method=data.payment_method,
-        lines=[CartLine(l.unit_id, l.qty, l.dosage_text, l.approval) for l in data.lines],
+        lines=[CartLine(l.unit_id, l.qty, l.dosage_text, l.approval, l.allergy_note) for l in data.lines],
         price_level=data.price_level,
         customer_id=data.customer_id,
         buyer_name=data.buyer_name,

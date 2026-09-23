@@ -1,5 +1,5 @@
 import { baht, daysBetween, thaiDate } from '../format.js';
-import { lineTotalSatang, lineUnit, unitPriceSatang } from './bill.js';
+import { lineAlerts, lineTotalSatang, lineUnit, needsPharmacist, unitPriceSatang } from './bill.js';
 import { CategoryBadge } from './ui.jsx';
 
 function LotHint({ plan, product, today, nearExpiryDays }) {
@@ -16,16 +16,28 @@ function LotHint({ plan, product, today, nearExpiryDays }) {
   );
 }
 
-function Status({ line, plan }) {
+function Status({ line, plan, alerts }) {
   if (plan && plan.short > 0) {
     return <span className="badge red">สต็อกไม่พอ ขาด {plan.short} {line.product.base_unit}</span>;
   }
-  if (!line.product.needs_pharmacist) return null;
+  if (!needsPharmacist(line, alerts)) return null;
   if (line.approval) return <span className="badge green">ยืนยันแล้ว · {line.approval.by}</span>;
+  const found = lineAlerts(line, alerts);
+  if (found.some((a) => a.level === 'direct')) return <span className="badge red">แพ้ยา · รอเภสัชกร</span>;
+  if (found.length) return <span className="badge amber">อาจแพ้ข้ามกลุ่ม · รอเภสัชกร</span>;
   return <span className="badge amber">รอเภสัชกรยืนยัน</span>;
 }
 
-export default function CartTable({ bill, plan, meta, dispatch }) {
+function LineAlerts({ line, alerts }) {
+  return lineAlerts(line, alerts).map((alert) => (
+    <div key={alert.allergy_id} className={`line-alert ${alert.level}`}>
+      <strong>{alert.level === 'direct' ? 'แพ้ยา' : 'อาจแพ้ข้ามกลุ่ม'}</strong> {alert.message}
+      {alert.severity === 'severe' && ' · รุนแรง'}
+    </div>
+  ));
+}
+
+export default function CartTable({ bill, plan, meta, alerts, dispatch }) {
   if (bill.lines.length === 0) {
     return (
       <div className="cart-empty">
@@ -69,6 +81,7 @@ export default function CartTable({ bill, plan, meta, dispatch }) {
                   today={meta.today}
                   nearExpiryDays={meta.near_expiry_days}
                 />
+                <LineAlerts line={line} alerts={alerts} />
               </td>
               <td className="col-qty">
                 <input
@@ -105,7 +118,7 @@ export default function CartTable({ bill, plan, meta, dispatch }) {
               <td className="col-num">{baht(unitPriceSatang(line, bill.priceLevel))}</td>
               <td className="col-num strong">{baht(lineTotalSatang(line, bill.priceLevel))}</td>
               <td className="col-status">
-                <Status line={line} plan={plan[line.key]} />
+                <Status line={line} plan={plan[line.key]} alerts={alerts} />
               </td>
               <td className="col-del">
                 <button
