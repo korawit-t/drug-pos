@@ -22,16 +22,21 @@ from .importer import (
     template_workbook,
 )
 from .models import Allergen, Lot, Product, ProductUnit, Purchase, StockCount, Supplier
+from .allergy import AllergyIndex
+from .classify import suggest_category
 from .services import (
+    ProductData,
     PurchaseData,
     PurchaseLine,
     StockCountData,
     StockCountLine,
+    UnitData,
     countable_lots,
     delete_count_draft,
     delete_draft,
     expired_lots,
     last_costs,
+    save_product,
     save_purchase,
     save_stock_count,
 )
@@ -681,3 +686,300 @@ def update_stock_count(request, count_id: int, data: StockCountIn):
 def remove_count_draft(request, count_id: int):
     delete_count_draft(get_object_or_404(StockCount, pk=count_id))
     return {"ok": True}
+
+
+# --- เพิ่ม/แก้ไขข้อมูลยาทีละรายการ (หน้า "นำเข้าข้อมูล" → ทีละรายการ) ------------
+
+
+def _require_staff(request):
+    if not request.user.is_staff:
+        raise HttpError(403, "แก้ไขข้อมูลยาได้เฉพาะผู้ดูแลร้าน")
+
+
+class ManageUnitIn(Schema):
+    id: int | None = None
+    name: str
+    factor: int = Field(default=1, ge=1)
+    barcode: str = ""
+    is_default: bool = False
+    prices: list[Decimal | None] = []  # ราคาดิบ ช่องว่าง = ยังไม่ตั้ง (ไม่ใช่ 0)
+
+
+class ManageProductIn(Schema):
+    code: str = ""
+    trade_name: str
+    generic_name: str = ""
+    strength: str = ""
+    dosage_form: str = ""
+    category: str
+    base_unit: str
+    registration_no: str = ""
+    in_ky11_list: bool = False
+    in_ky13_list: bool = False
+    default_dosage: str = ""
+    label_warning: str = ""
+    storage_location: str = ""
+    is_active: bool = True
+    allergen_ids: list[int] = []
+    units: list[ManageUnitIn] = []
+
+
+class ManageUnitOut(Schema):
+    id: int
+    name: str
+    factor: int
+    barcode: str
+    is_default: bool
+    prices: list[Decimal | None]
+
+
+class SuggestionOut(Schema):
+    category: str
+    label: str
+    term: str  # คำในชื่อยาที่ทำให้เสนอแบบนี้ — แสดงให้เภสัชตัดสินใจได้
+
+
+def _suggestion(product: Product) -> dict | None:
+    found = suggest_category(product.trade_name, product.generic_name)
+    if found is None:
+        return None
+    category, term = found
+    return {"category": category, "label": dict(Product.Category.choices)[category], "term": term}
+
+
+class ManageProductOut(Schema):
+    id: int
+    code: str
+    trade_name: str
+    generic_name: str
+    strength: str
+    dosage_form: str
+    category: str
+    category_label: str
+    base_unit: str
+    registration_no: str
+    in_ky11_list: bool
+    in_ky13_list: bool
+    default_dosage: str
+    label_warning: str
+    storage_location: str
+    is_active: bool
+    allergen_ids: list[int]
+    matched_allergens: str  # กลุ่มยาที่ระบบจับคู่ได้เองจากชื่อ
+    units: list[ManageUnitOut]
+    on_hand: int
+    needs_review: bool
+    suggestion: SuggestionOut | None
+
+
+class ManageRowOut(Schema):
+    id: int
+    code: str
+    display_name: str
+    generic_name: str
+    category_label: str
+    base_unit: str
+    unit_count: int
+    on_hand: int
+    is_active: bool
+    missing: list[str]  # review / barcode / generic / unit
+    suggestion: SuggestionOut | None
+    units: list[ManageUnitOut]  # ใช้ยิงบาร์โค้ดจากหน้ารายการได้เลย
+
+
+# งานที่ยังค้างของยาแต่ละตัว — ไฟล์จากโปรแกรมเดิมมักให้มาไม่ครบ
+GAPS = {
+    "review": ("ยังไม่ได้ตรวจประเภทยา", "ระบบเดาประเภทให้ตอนนำเข้า ต้องมีเภสัชกรยืนยัน"),
+    "barcode": ("ยังมีหน่วยขายที่ไม่มีบาร์โค้ด", "หน่วยที่ไม่มีบาร์โค้ดจะสแกนขายไม่ได้ ต้องพิมพ์ชื่อหา"),
+    "generic": ("ยังไม่มีชื่อสามัญ", "แจ้งเตือนแพ้ยาจะจับคู่ไม่ได้"),
+    "unit": ("ขายได้หน่วยเดียว", "ไม่มีหน่วยย่อย เช่น ซื้อมาเป็นกล่องแต่ขายเป็นเม็ดไม่ได้"),
+}
+
+
+def _gaps_of(product: Product) -> list[str]:
+    units = list(product.units.all())
+    gaps = []
+    if product.needs_review:
+        gaps.append("review")
+    if any(not unit.barcode for unit in units):
+        gaps.append("barcode")
+    if not product.generic_name.strip():
+        gaps.append("generic")
+    if len(units) < 2 and all(unit.factor == 1 for unit in units):
+        gaps.append("unit")
+    return gaps
+
+
+def manage_payload(product: Product) -> dict:
+    index = AllergyIndex()
+    groups = index.product_groups(product)
+    return {
+        "id": product.pk,
+        "code": product.code,
+        "trade_name": product.trade_name,
+        "generic_name": product.generic_name,
+        "strength": product.strength,
+        "dosage_form": product.dosage_form,
+        "category": product.category,
+        "category_label": product.get_category_display(),
+        "base_unit": product.base_unit,
+        "registration_no": product.registration_no,
+        "in_ky11_list": product.in_ky11_list,
+        "in_ky13_list": product.in_ky13_list,
+        "default_dosage": product.default_dosage,
+        "label_warning": product.label_warning,
+        "storage_location": product.storage_location,
+        "is_active": product.is_active,
+        "allergen_ids": [a.pk for a in product.allergens.all()],
+        "matched_allergens": index.describe(groups) if groups else "",
+        "units": [
+            {
+                "id": unit.pk,
+                "name": unit.name,
+                "factor": unit.factor,
+                "barcode": unit.barcode,
+                "is_default": unit.is_default,
+                "prices": [getattr(unit, f"price{level}") for level in range(1, 6)],
+            }
+            for unit in sorted(product.units.all(), key=lambda u: u.factor)
+        ],
+        "on_hand": sum(lot.qty_on_hand for lot in product.lots.all()),
+        "needs_review": product.needs_review,
+        "suggestion": _suggestion(product),
+    }
+
+
+def _product_data(data: ManageProductIn) -> ProductData:
+    return ProductData(
+        trade_name=data.trade_name,
+        base_unit=data.base_unit,
+        category=data.category,
+        code=data.code,
+        generic_name=data.generic_name,
+        strength=data.strength,
+        dosage_form=data.dosage_form,
+        registration_no=data.registration_no,
+        in_ky11_list=data.in_ky11_list,
+        in_ky13_list=data.in_ky13_list,
+        default_dosage=data.default_dosage,
+        label_warning=data.label_warning,
+        storage_location=data.storage_location,
+        is_active=data.is_active,
+        allergen_ids=data.allergen_ids,
+        units=[UnitData(u.name, u.factor, u.barcode, u.is_default, list(u.prices), u.id) for u in data.units],
+    )
+
+
+def _manage_rows(q: str = "", missing: str = ""):
+    products = Product.objects.prefetch_related("units", "lots").order_by("trade_name")
+    if q := q.strip():
+        products = products.filter(
+            Q(trade_name__icontains=q) | Q(generic_name__icontains=q) | Q(code__icontains=q)
+            | Q(units__barcode__startswith=q)
+        ).distinct()
+    rows = [(p, _gaps_of(p)) for p in products]
+    if missing in GAPS:
+        rows = [(p, gaps) for p, gaps in rows if missing in gaps]
+    return rows
+
+
+@router.get("/manage/products", response=list[ManageRowOut])
+def list_manage_products(request, q: str = "", missing: str = "", limit: int = 50):
+    _require_staff(request)
+    return [
+        {
+            "id": p.pk,
+            "code": p.code,
+            "display_name": p.display_name,
+            "generic_name": p.generic_name,
+            "category_label": p.get_category_display(),
+            "base_unit": p.base_unit,
+            "unit_count": len(p.units.all()),
+            "on_hand": sum(lot.qty_on_hand for lot in p.lots.all()),
+            "is_active": p.is_active,
+            "missing": gaps,
+            "suggestion": _suggestion(p) if "review" in gaps else None,
+            "units": [
+                {
+                    "id": unit.pk, "name": unit.name, "factor": unit.factor, "barcode": unit.barcode,
+                    "is_default": unit.is_default,
+                    "prices": [getattr(unit, f"price{level}") for level in range(1, 6)],
+                }
+                for unit in sorted(p.units.all(), key=lambda u: u.factor)
+            ],
+        }
+        for p, gaps in _manage_rows(q, missing)[: min(limit, 200)]
+    ]
+
+
+class GapOut(Schema):
+    key: str
+    label: str
+    why: str
+    count: int
+
+
+@router.get("/manage/gaps", response=list[GapOut])
+def list_manage_gaps(request):
+    """สรุปว่ายังมียากี่ตัวที่ข้อมูลไม่ครบในแต่ละเรื่อง — ใช้เป็นรายการงานหลังนำเข้าไฟล์"""
+    _require_staff(request)
+    counts = dict.fromkeys(GAPS, 0)
+    for _, gaps in _manage_rows():
+        for gap in gaps:
+            counts[gap] += 1
+    return [{"key": key, "label": label, "why": why, "count": counts[key]} for key, (label, why) in GAPS.items()]
+
+
+class CategoryIn(Schema):
+    category: str
+
+
+@router.put("/manage/products/{product_id}/category", response=ManageProductOut)
+def set_product_category(request, product_id: int, data: CategoryIn):
+    """ยืนยันประเภทยาทีละตัวจากหน้าตรวจทาน — ปลดธง "ยังไม่ได้ตรวจทาน" ด้วย"""
+    _require_staff(request)
+    if data.category not in Product.Category.values:
+        raise HttpError(400, "ประเภทยาไม่ถูกต้อง")
+    product = get_object_or_404(Product, pk=product_id)
+    product.category = data.category
+    product.needs_review = False
+    product.save(update_fields=["category", "needs_review"])
+    return manage_payload(product)
+
+
+class BarcodeIn(Schema):
+    barcode: str
+
+
+@router.put("/manage/units/{unit_id}/barcode", response=ManageProductOut)
+def set_unit_barcode(request, unit_id: int, data: BarcodeIn):
+    """ตั้งบาร์โค้ดทีละหน่วยด้วยเครื่องสแกน — ไล่ยิงทีละตัวได้โดยไม่ต้องเปิดฟอร์มเต็ม"""
+    _require_staff(request)
+    unit = get_object_or_404(ProductUnit.objects.select_related("product"), pk=unit_id)
+    barcode = data.barcode.strip()[:50]
+    if barcode:
+        clash = ProductUnit.objects.filter(barcode=barcode).exclude(pk=unit.pk).select_related("product").first()
+        if clash is not None:
+            raise HttpError(400, f"บาร์โค้ด {barcode} ใช้อยู่กับ {clash.product.display_name} ({clash.name}) แล้ว")
+    unit.barcode = barcode
+    unit.save(update_fields=["barcode"])
+    return manage_payload(unit.product)
+
+
+@router.get("/manage/products/{product_id}", response=ManageProductOut)
+def get_manage_product(request, product_id: int):
+    _require_staff(request)
+    return manage_payload(get_object_or_404(Product, pk=product_id))
+
+
+@router.post("/manage/products", response=ManageProductOut)
+def create_manage_product(request, data: ManageProductIn):
+    _require_staff(request)
+    return manage_payload(save_product(_product_data(data)))
+
+
+@router.put("/manage/products/{product_id}", response=ManageProductOut)
+def update_manage_product(request, product_id: int, data: ManageProductIn):
+    _require_staff(request)
+    product = get_object_or_404(Product, pk=product_id)
+    return manage_payload(save_product(_product_data(data), product=product))

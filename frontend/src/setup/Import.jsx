@@ -3,6 +3,7 @@ import { upload } from '../api.js';
 import { Brand, TopLinks, ViewTabs } from '../nav.jsx';
 import { Modal, Toast, useToast } from '../pos/ui.jsx';
 import ColumnMapper from './ColumnMapper.jsx';
+import DrugManager from './DrugManager.jsx';
 import { missingRequired, recallMapping, rememberMapping } from './mapping.js';
 
 function Summary({ result }) {
@@ -48,6 +49,7 @@ function Issues({ title, issues, total, kind }) {
 
 // Setup screen: fill in the shop's drug list in Excel, check it, then import.
 export default function ImportData({ meta, nav, active }) {
+  const [tab, setTab] = useState('file');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [mapping, setMapping] = useState({});
@@ -160,7 +162,30 @@ export default function ImportData({ meta, nav, active }) {
       </header>
 
       <main className="setup-main">
-        <div className="panel">
+        <div className="setup-tabs" role="tablist" aria-label="วิธีเพิ่มข้อมูลยา">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'file'}
+            className={`btn ${tab === 'file' ? 'primary' : ''}`}
+            onClick={() => setTab('file')}
+          >
+            นำเข้าจากไฟล์ Excel / CSV
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'manual'}
+            className={`btn ${tab === 'manual' ? 'primary' : ''}`}
+            onClick={() => setTab('manual')}
+          >
+            เพิ่ม / แก้ไขทีละรายการ
+          </button>
+        </div>
+
+        {tab === 'manual' && <DrugManager meta={meta} notify={notify} />}
+
+        <div className="panel" hidden={tab !== 'file'}>
           <h2>นำเข้าข้อมูลยาจาก Excel</h2>
           <ol className="steps">
             <li>
@@ -184,7 +209,7 @@ export default function ImportData({ meta, nav, active }) {
           </p>
         </div>
 
-        <div className="panel">
+        <div className="panel" hidden={tab !== 'file'}>
           <label className="field">
             ไฟล์ข้อมูล (.xlsx หรือ .csv)
             <input
@@ -225,7 +250,7 @@ export default function ImportData({ meta, nav, active }) {
           {defaultCategory && (
             <div className="alert warning">
               ยาใหม่ที่ไฟล์ไม่ได้บอกประเภทจะถูกตั้งเป็น <strong>{meta.categories.find((c) => c.value === defaultCategory)?.label}</strong> ทั้งหมด —
-              ประเภทเป็นตัวตัดสินว่าขายแล้วต้องให้เภสัชกรยืนยันหรือไม่ นำเข้าเสร็จแล้วต้องตามไปตรวจทีละตัว
+              ประเภทเป็นตัวตัดสินว่าขายแล้วต้องให้เภสัชกรยืนยันหรือไม่ นำเข้าเสร็จแล้วให้ไปตรวจทีละตัวที่แท็บ "เพิ่ม / แก้ไขทีละรายการ"
             </div>
           )}
           {withStock && (
@@ -255,7 +280,7 @@ export default function ImportData({ meta, nav, active }) {
           {file && !checked && <p className="muted small">กด "ตรวจไฟล์" ก่อน ระบบจะบอกว่าจะเพิ่มหรือแก้อะไรบ้าง</p>}
         </div>
 
-        {preview && (
+        {preview && tab === 'file' && (
           <ColumnMapper
             preview={preview}
             mapping={mapping}
@@ -268,7 +293,7 @@ export default function ImportData({ meta, nav, active }) {
           />
         )}
 
-        {result && (
+        {result && tab === 'file' && (
           <div className="panel">
             <div
               className={`alert ${result.committed ? 'success' : result.error_count ? 'danger' : 'warning'}`}
