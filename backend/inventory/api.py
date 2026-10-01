@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -11,7 +12,15 @@ from ninja.errors import HttpError
 from accounts.models import PinAttempt
 from accounts.services import client_ip, verify_pin
 
-from .importer import FileFormatError, import_rows, read_rows, template_workbook
+from .importer import (
+    COLUMNS,
+    FIELD_INFO,
+    FileFormatError,
+    import_rows,
+    inspect_file,
+    read_rows,
+    template_workbook,
+)
 from .models import Allergen, Lot, Product, ProductUnit, Purchase, StockCount, Supplier
 from .services import (
     PurchaseData,
@@ -335,6 +344,7 @@ def remove_draft(request, purchase_id: int):
 
 MAX_UPLOAD = 10 * 1024 * 1024
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+COLUMN_LABELS = {field_name: names[0] for field_name, names in COLUMNS.items()}
 
 
 class ImportIssueOut(Schema):
@@ -350,11 +360,54 @@ class ImportResultOut(Schema):
     units_updated: int
     stock_lines: int
     stock_base_qty: int
+    default_category_rows: int
     committed: bool
+    columns: list[str]  # หัวตารางที่ระบบอ่านออก (ชื่อไทยมาตรฐาน)
     errors: list[ImportIssueOut]
     warnings: list[ImportIssueOut]
     error_count: int
     warning_count: int
+
+
+class FieldOut(Schema):
+    name: str
+    label: str
+    required: bool
+    help: str
+
+
+class PreviewOut(Schema):
+    header_row: int
+    headers: list[str]
+    guess: dict[str, int]
+    sample: list[list[str]]
+    data_rows: int
+    notes: list[ImportIssueOut]
+    fields: list[FieldOut]
+
+
+@router.post("/import/inspect", response=PreviewOut)
+def import_inspect(request, file: UploadedFile = File(...), header_row: int | None = Form(None)):
+    """
+    เปิดดูไฟล์ก่อนนำเข้า: หัวตารางของไฟล์เอง สิ่งที่ระบบเดาว่าแต่ละคอลัมน์คืออะไร และตัวอย่างแถวจริง
+    ไฟล์จากโปรแกรมไหนก็เปิดได้ ถึงจะเดาไม่ออกสักคอลัมน์ก็ตาม — คนเป็นคนจับคู่เอง
+    """
+    if not request.user.is_staff:
+        raise HttpError(403, "นำเข้าข้อมูลได้เฉพาะผู้ดูแลร้าน")
+    if file.size > MAX_UPLOAD:
+        raise HttpError(400, "ไฟล์ใหญ่เกิน 10 MB")
+    try:
+        preview = inspect_file(file.read(), file.name, header_row=header_row)
+    except FileFormatError as exc:
+        raise HttpError(400, exc.message)
+    return {
+        **vars(preview),
+        "notes": [vars(note) for note in preview.notes],
+        "fields": [
+            {"name": name, "label": label, "required": required, "help": help_text}
+            for name, label, required, help_text in FIELD_INFO
+        ],
+    }
 
 
 @router.get("/import/template")
@@ -371,23 +424,43 @@ def import_products(
     file: UploadedFile = File(...),
     with_stock: bool = Form(False),
     commit: bool = Form(False),
+    default_category: str = Form(""),
+    mapping: str = Form(""),  # JSON {field: column index} ที่คนเลือกเอง — ว่าง = ใช้ที่ระบบเดา
+    header_row: int | None = Form(None),
 ):
     """ตรวจไฟล์ (commit=false) หรือ นำเข้าจริง (commit=true) — ถ้ามีข้อผิดพลาดจะไม่เขียนอะไรเลย"""
     if not request.user.is_staff:
         raise HttpError(403, "นำเข้าข้อมูลได้เฉพาะผู้ดูแลร้าน")
     if file.size > MAX_UPLOAD:
         raise HttpError(400, "ไฟล์ใหญ่เกิน 10 MB")
+    if default_category and default_category not in Product.Category.values:
+        raise HttpError(400, "ประเภทเริ่มต้นไม่ถูกต้อง")
+    chosen = None
+    if mapping.strip():
+        try:
+            chosen = {str(name): int(index) for name, index in json.loads(mapping).items() if index is not None}
+        except (ValueError, TypeError, AttributeError):
+            raise HttpError(400, "การจับคู่คอลัมน์ไม่ถูกต้อง")
     try:
-        rows = read_rows(file.read(), file.name)
+        sheet = read_rows(file.read(), file.name, mapping=chosen, header_row=header_row)
     except FileFormatError as exc:
         raise HttpError(400, exc.message)
-    result = import_rows(rows, with_stock=with_stock, user=request.user, commit=commit, source=file.name)
+    result = import_rows(
+        sheet.rows,
+        with_stock=with_stock,
+        user=request.user,
+        commit=commit,
+        source=file.name,
+        default_category=default_category or None,
+    )
+    warnings = sheet.notes + result.warnings
     return {
         **vars(result),
+        "columns": [COLUMN_LABELS.get(name, name) for name in sheet.columns],
         "errors": [vars(issue) for issue in result.errors[:50]],
-        "warnings": [vars(issue) for issue in result.warnings[:50]],
+        "warnings": [vars(issue) for issue in warnings[:50]],
         "error_count": len(result.errors),
-        "warning_count": len(result.warnings),
+        "warning_count": len(warnings),
     }
 
 

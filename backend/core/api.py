@@ -5,7 +5,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from accounts.models import User
-from inventory.models import PriceLevel, StockCountItem
+from inventory.models import PriceLevel, Product, StockCountItem
 
 from .models import ShopSettings
 from .promptpay import generate_payload
@@ -25,6 +25,7 @@ def meta(request):
         "price_levels": [{"level": p.level, "name": p.name} for p in PriceLevel.objects.all()],
         "pharmacists": [{"id": u.pk, "name": u.label_name, "has_pin": bool(u.pin_hash)} for u in pharmacists],
         "adjust_reasons": [{"value": value, "label": label} for value, label in StockCountItem.Reason.choices],
+        "categories": [{"value": value, "label": label} for value, label in Product.Category.choices],
     }
 
 

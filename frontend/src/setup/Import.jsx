@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { upload } from '../api.js';
 import { Brand, TopLinks, ViewTabs } from '../nav.jsx';
 import { Modal, Toast, useToast } from '../pos/ui.jsx';
+import ColumnMapper from './ColumnMapper.jsx';
+import { missingRequired, recallMapping, rememberMapping } from './mapping.js';
 
 function Summary({ result }) {
   const cards = [
@@ -10,6 +12,7 @@ function Summary({ result }) {
     ['หน่วยขายใหม่', result.units_created],
     ['หน่วยขายที่อัปเดต', result.units_updated],
     ['รายการยอดยกมา', result.stock_lines],
+    ['ใช้ประเภทเริ่มต้น', result.default_category_rows],
   ];
   return (
     <div className="summary-cards">
@@ -46,7 +49,11 @@ function Issues({ title, issues, total, kind }) {
 // Setup screen: fill in the shop's drug list in Excel, check it, then import.
 export default function ImportData({ meta, nav, active }) {
   const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [mapping, setMapping] = useState({});
+  const [headerRow, setHeaderRow] = useState(1);
   const [withStock, setWithStock] = useState(false);
+  const [defaultCategory, setDefaultCategory] = useState('');
   const [result, setResult] = useState(null);
   const [checkedKey, setCheckedKey] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -54,14 +61,56 @@ export default function ImportData({ meta, nav, active }) {
   const [toast, notify] = useToast();
   const inputRef = useRef(null);
 
-  const key = file ? `${file.name}|${file.size}|${file.lastModified}|${withStock}` : '';
+  const key = file
+    ? `${file.name}|${file.size}|${file.lastModified}|${withStock}|${defaultCategory}|${headerRow}|${JSON.stringify(mapping)}`
+    : '';
   const checked = key !== '' && checkedKey === key && result;
+  const unmatched = preview ? missingRequired(mapping, preview.fields) : [];
   const readyToImport = checked && !result.error_count && !result.committed;
 
-  function pickFile(nextFile) {
+  async function inspect(nextFile, row) {
+    const body = new FormData();
+    body.append('file', nextFile);
+    if (row) body.append('header_row', String(row));
+    const data = await upload('/import/inspect', body);
+    setPreview(data);
+    setHeaderRow(data.header_row);
+    // ถ้าเคยจับคู่ไฟล์หน้าตาเดียวกันไว้แล้ว ใช้ของเดิม ไม่ต้องทำซ้ำทุกเดือน
+    setMapping(recallMapping(data.headers) || data.guess);
+    return data;
+  }
+
+  async function pickFile(nextFile) {
     setFile(nextFile);
     setResult(null);
     setCheckedKey('');
+    setPreview(null);
+    setMapping({});
+    if (!nextFile) return;
+    setBusy(true);
+    try {
+      await inspect(nextFile, null);
+    } catch (err) {
+      notify(err.message, 'error');
+      setFile(null);
+      if (inputRef.current) inputRef.current.value = '';
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeHeaderRow(row) {
+    setHeaderRow(row);
+    setResult(null);
+    setCheckedKey('');
+    setBusy(true);
+    try {
+      await inspect(file, row);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function send(commit) {
@@ -73,6 +122,9 @@ export default function ImportData({ meta, nav, active }) {
     body.append('file', file);
     body.append('with_stock', withStock ? 'true' : 'false');
     body.append('commit', commit ? 'true' : 'false');
+    body.append('default_category', defaultCategory);
+    body.append('mapping', JSON.stringify(mapping));
+    body.append('header_row', String(headerRow));
     setBusy(true);
     setConfirming(false);
     try {
@@ -81,8 +133,10 @@ export default function ImportData({ meta, nav, active }) {
       setCheckedKey(key);
       if (data.committed) {
         notify(`นำเข้าแล้ว ${data.rows.toLocaleString('th-TH')} แถว`);
+        if (preview) rememberMapping(preview.headers, mapping);
         if (inputRef.current) inputRef.current.value = '';
         setFile(null);
+        setPreview(null);
       } else if (data.error_count) {
         notify(`พบข้อผิดพลาด ${data.error_count} รายการ — ยังไม่ได้บันทึกอะไร`, 'error');
       } else if (!commit) {
@@ -122,7 +176,11 @@ export default function ImportData({ meta, nav, active }) {
             <li>เลือกไฟล์ → ตรวจไฟล์ → นำเข้า (ถ้ามีแถวผิดแม้แถวเดียว ระบบจะไม่บันทึกอะไรเลย)</li>
           </ol>
           <p className="muted small">
-            นำเข้าซ้ำได้ ระบบจับคู่ด้วยบาร์โค้ด หรือชื่อการค้า + ความแรง แล้วอัปเดตให้ จึงใช้ปรับราคาทั้งร้านได้ด้วย
+            นำเข้าซ้ำได้ ระบบจับคู่ด้วยรหัสสินค้า บาร์โค้ด หรือชื่อการค้า + ความแรง แล้วอัปเดตให้ จึงใช้ปรับราคาทั้งร้านได้ด้วย
+          </p>
+          <p className="muted small">
+            ใช้ไฟล์ที่ส่งออกจากโปรแกรมเดิมได้เลย ระบบหาหัวตารางเองแม้มีบรรทัดชื่อรายงานอยู่ข้างบน ตัดบรรทัดสรุปท้ายไฟล์ออกให้
+            และรู้จักชื่อคอลัมน์แบบไทยทั่วไป (ชื่อสินค้า, วันที่หมดอายุ, จำนวนเหลือ, ต้นทุน/หน่วย, ราคาระดับ 1–5)
           </p>
         </div>
 
@@ -147,6 +205,29 @@ export default function ImportData({ meta, nav, active }) {
             />
             นำเข้ายอดยกมาด้วย (ช่องยอดยกมา, lot, วันหมดอายุ)
           </label>
+          <label className="field">
+            ประเภทยาเริ่มต้น (ใช้เมื่อไฟล์ไม่มีคอลัมน์ "ประเภท")
+            <select
+              value={defaultCategory}
+              onChange={(e) => {
+                setDefaultCategory(e.target.value);
+                setCheckedKey('');
+              }}
+            >
+              <option value="">— ไม่ตั้ง: ไฟล์ต้องบอกประเภทเอง —</option>
+              {meta.categories.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {defaultCategory && (
+            <div className="alert warning">
+              ยาใหม่ที่ไฟล์ไม่ได้บอกประเภทจะถูกตั้งเป็น <strong>{meta.categories.find((c) => c.value === defaultCategory)?.label}</strong> ทั้งหมด —
+              ประเภทเป็นตัวตัดสินว่าขายแล้วต้องให้เภสัชกรยืนยันหรือไม่ นำเข้าเสร็จแล้วต้องตามไปตรวจทีละตัว
+            </div>
+          )}
           {withStock && (
             <div className="alert warning">
               ยอดยกมาจะถูก <strong>บวกเพิ่ม</strong> เข้าสต็อกทุกครั้งที่นำเข้า ถ้านำเข้าไฟล์เดิมซ้ำ สต็อกจะเกิน —
@@ -154,7 +235,12 @@ export default function ImportData({ meta, nav, active }) {
             </div>
           )}
           <div className="row-actions">
-            <button type="button" className="btn" disabled={busy || !file} onClick={() => send(false)}>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || !file || unmatched.length > 0}
+              onClick={() => send(false)}
+            >
               {busy ? 'กำลังตรวจ…' : 'ตรวจไฟล์'}
             </button>
             <button
@@ -169,6 +255,19 @@ export default function ImportData({ meta, nav, active }) {
           {file && !checked && <p className="muted small">กด "ตรวจไฟล์" ก่อน ระบบจะบอกว่าจะเพิ่มหรือแก้อะไรบ้าง</p>}
         </div>
 
+        {preview && (
+          <ColumnMapper
+            preview={preview}
+            mapping={mapping}
+            busy={busy}
+            onChange={(next) => {
+              setMapping(next);
+              setCheckedKey('');
+            }}
+            onHeaderRow={changeHeaderRow}
+          />
+        )}
+
         {result && (
           <div className="panel">
             <div
@@ -181,6 +280,9 @@ export default function ImportData({ meta, nav, active }) {
                   : `ไฟล์ผ่านการตรวจ ${result.rows.toLocaleString('th-TH')} แถว — ยังไม่ได้บันทึก กด "นำเข้าจริง" เพื่อบันทึก`}
             </div>
             <Summary result={result} />
+            {result.columns.length > 0 && (
+              <p className="muted small">อ่านหัวตารางได้ {result.columns.length} คอลัมน์: {result.columns.join(', ')}</p>
+            )}
             {result.stock_lines > 0 && (
               <p className="muted small">
                 ยอดยกมารวม {result.stock_base_qty.toLocaleString('th-TH')} หน่วยเล็กสุด
