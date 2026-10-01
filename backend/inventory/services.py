@@ -3,11 +3,13 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import ProtectedError
 from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .models import (
+    Allergen,
     Lot,
     Product,
     ProductUnit,
@@ -388,3 +390,140 @@ def delete_count_draft(count: StockCount) -> None:
         if count.status == StockCount.Status.POSTED:
             raise StockError("ใบนับสต็อกที่ปรับยอดแล้วลบไม่ได้")
         count.delete()
+
+
+# --- เพิ่ม/แก้ไขข้อมูลยาทีละรายการ ---------------------------------------------
+
+
+class ProductError(StockError):
+    """ข้อมูลยาที่กรอกมาไม่ถูกต้อง — ใช้ handler เดียวกับ StockError (ตอบ 400)"""
+
+
+@dataclass
+class UnitData:
+    name: str
+    factor: int = 1
+    barcode: str = ""
+    is_default: bool = False
+    prices: list = field(default_factory=list)  # 5 ช่อง ช่องแรกคือราคาระดับ 1 (ที่เหลือเว้น None ได้)
+    id: int | None = None
+
+
+@dataclass
+class ProductData:
+    trade_name: str
+    base_unit: str
+    category: str
+    code: str = ""
+    generic_name: str = ""
+    strength: str = ""
+    dosage_form: str = ""
+    registration_no: str = ""
+    in_ky11_list: bool = False
+    in_ky13_list: bool = False
+    default_dosage: str = ""
+    label_warning: str = ""
+    storage_location: str = ""
+    is_active: bool = True
+    allergen_ids: list[int] = field(default_factory=list)
+    units: list[UnitData] = field(default_factory=list)
+
+
+def _check_units(data: ProductData, product: Product | None) -> list[UnitData]:
+    units = [unit for unit in data.units if unit.name.strip() or unit.prices]
+    if not units:
+        raise ProductError("ต้องมีหน่วยขายอย่างน้อย 1 หน่วย")
+    names, barcodes = {}, {}
+    for number, unit in enumerate(units, 1):
+        unit.name = unit.name.strip()[:30]
+        unit.barcode = unit.barcode.strip()[:50]
+        if not unit.name:
+            raise ProductError(f"หน่วยขายที่ {number}: ต้องมีชื่อหน่วย")
+        if unit.factor < 1:
+            raise ProductError(f"หน่วย {unit.name}: จำนวนหน่วยเล็กสุดต้องเป็นจำนวนเต็มตั้งแต่ 1")
+        key = unit.name.lower()
+        if key in names:
+            raise ProductError(f"หน่วย {unit.name} ซ้ำกัน")
+        names[key] = number
+        if unit.barcode:
+            if unit.barcode in barcodes:
+                raise ProductError(f"บาร์โค้ด {unit.barcode} ซ้ำกันในยาตัวนี้")
+            barcodes[unit.barcode] = number
+            clash = ProductUnit.objects.filter(barcode=unit.barcode).select_related("product")
+            if product is not None:
+                clash = clash.exclude(product=product)
+            if (other := clash.first()) is not None:
+                raise ProductError(f"บาร์โค้ด {unit.barcode} ใช้อยู่กับ {other.product.display_name} แล้ว")
+        prices = list(unit.prices) + [None] * (5 - len(unit.prices))
+        if prices[0] is None:
+            raise ProductError(f"หน่วย {unit.name}: ต้องมีราคาระดับ 1")
+        if any(price is not None and price < 0 for price in prices):
+            raise ProductError(f"หน่วย {unit.name}: ราคาติดลบไม่ได้")
+        unit.prices = prices[:5]
+    return units
+
+
+def save_product(data: ProductData, product: Product | None = None) -> Product:
+    """สร้างหรือแก้ไขยาหนึ่งตัวพร้อมหน่วยขายทั้งหมดในครั้งเดียว ผิดที่ใดที่หนึ่งคือไม่บันทึกอะไรเลย"""
+    with transaction.atomic():
+        trade_name = data.trade_name.strip()
+        base_unit = data.base_unit.strip()
+        code = data.code.strip()
+        if not trade_name:
+            raise ProductError("ต้องมีชื่อการค้า")
+        if not base_unit:
+            raise ProductError("ต้องระบุหน่วยเล็กสุด (หน่วยที่ใช้นับสต็อก เช่น เม็ด)")
+        if data.category not in Product.Category.values:
+            raise ProductError("ประเภทยาไม่ถูกต้อง")
+        if code:
+            clash = Product.objects.filter(code=code)
+            if product is not None:
+                clash = clash.exclude(pk=product.pk)
+            if (other := clash.first()) is not None:
+                raise ProductError(f"รหัสสินค้า {code} ใช้อยู่กับ {other.display_name} แล้ว")
+        units = _check_units(data, product)
+
+        if product is None:
+            product = Product()
+        product.code = code
+        product.trade_name = trade_name
+        product.generic_name = data.generic_name.strip()
+        product.strength = data.strength.strip()
+        product.dosage_form = data.dosage_form.strip()
+        product.category = data.category
+        product.base_unit = base_unit
+        product.registration_no = data.registration_no.strip()
+        product.in_ky11_list = data.in_ky11_list
+        product.in_ky13_list = data.in_ky13_list
+        product.default_dosage = data.default_dosage.strip()
+        product.label_warning = data.label_warning.strip()
+        product.storage_location = data.storage_location.strip()
+        product.is_active = data.is_active
+        product.needs_review = False  # มีคนเปิดดูและบันทึกเองแล้ว
+        product.save()
+        product.allergens.set(Allergen.objects.filter(pk__in=data.allergen_ids))
+
+        keep = set()
+        default_unit = next((u for u in units if u.is_default), min(units, key=lambda u: u.factor))
+        for line in units:
+            unit = product.units.filter(pk=line.id).first() if line.id else None
+            if unit is None:
+                unit = ProductUnit(product=product)
+            unit.name = line.name
+            unit.factor = line.factor
+            unit.barcode = line.barcode
+            unit.is_default = line is default_unit
+            for level, price in enumerate(line.prices, start=1):
+                setattr(unit, f"price{level}", price)
+            unit.save()
+            keep.add(unit.pk)
+
+        for unit in product.units.exclude(pk__in=keep):
+            try:
+                unit.delete()
+            except ProtectedError:
+                raise ProductError(
+                    f"หน่วย {unit.name} เคยมีการรับเข้าหรือขายไปแล้ว ลบไม่ได้ — แก้ชื่อหรือราคาแทน"
+                ) from None
+    product.refresh_from_db()
+    return product

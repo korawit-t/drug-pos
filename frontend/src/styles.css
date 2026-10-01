@@ -1339,6 +1339,93 @@ input[type='file'] {
   background: var(--surface-2);
 }
 
+.setup-tabs {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 900px;
+}
+
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.unit-table input {
+  width: 100%;
+}
+
+.unit-table .col-unit-name {
+  width: 120px;
+}
+
+.unit-table .col-qty {
+  width: 90px;
+}
+
+.unit-table .col-lot {
+  width: 130px;
+}
+
+.col-price {
+  width: 86px;
+}
+
+.col-price input {
+  text-align: right;
+}
+
+.col-default {
+  width: 48px;
+  text-align: center;
+}
+
+.drug-list li {
+  align-items: flex-start;
+}
+
+.drug-row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scan-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.scan-row input {
+  width: 180px;
+}
+
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--amber-bg);
+  color: var(--amber-text);
+  font-size: 14px;
+}
+
+.chip.done {
+  opacity: 0.55;
+}
+
 /* Column matching ---------------------------------------------------------- */
 
 .map-scroll {
