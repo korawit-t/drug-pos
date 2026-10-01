@@ -72,6 +72,10 @@ class Product(models.Model):
         DANGEROUS = "dangerous", "ยาอันตราย"
         SPECIAL_CONTROLLED = "special_controlled", "ยาควบคุมพิเศษ"
 
+    code = models.CharField(
+        "รหัสสินค้า", max_length=50, blank=True, db_index=True,
+        help_text="รหัสของร้าน หรือรหัสที่ติดมาจากโปรแกรมเดิม — ใช้จับคู่ตอนนำเข้าไฟล์ซ้ำ",
+    )
     trade_name = models.CharField("ชื่อการค้า", max_length=200)
     generic_name = models.CharField("ชื่อสามัญ", max_length=200, blank=True)
     strength = models.CharField("ความแรง", max_length=100, blank=True, help_text="เช่น 500 mg")
@@ -95,11 +99,18 @@ class Product(models.Model):
         help_text="ปกติระบบจับคู่จากชื่อสามัญให้เอง เลือกเพิ่มเมื่อชื่อยาไม่บอกกลุ่ม",
     )
     is_active = models.BooleanField("ใช้งาน", default=True)
+    needs_review = models.BooleanField(
+        "ยังไม่ได้ตรวจทาน", default=False,
+        help_text="ติดเองเมื่อนำเข้าจากไฟล์แล้วระบบต้องเดาแทน เช่น ไฟล์ไม่ได้บอกประเภทยา — ปลดเมื่อมีคนเปิดแก้และบันทึก",
+    )
 
     class Meta:
         verbose_name = "สินค้า / ยา"
         verbose_name_plural = "สินค้า / ยา"
         ordering = ["trade_name"]
+        constraints = [
+            models.UniqueConstraint(fields=["code"], condition=~Q(code=""), name="unique_product_code"),
+        ]
 
     def __str__(self):
         return self.display_name

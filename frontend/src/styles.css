@@ -1338,3 +1338,58 @@ input[type='file'] {
   padding: 8px;
   background: var(--surface-2);
 }
+
+/* Column matching ---------------------------------------------------------- */
+
+.map-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.map-table {
+  min-width: 100%;
+  width: max-content;
+}
+
+.map-table th {
+  vertical-align: top;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.map-table td {
+  padding: 6px 8px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-table td.unused {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.map-table select {
+  width: 100%;
+  min-width: 140px;
+}
+
+.map-table select.mapped {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.file-header {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.drug-list .badge {
+  margin-left: 6px;
+}
